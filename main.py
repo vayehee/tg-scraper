@@ -10,6 +10,7 @@ import re
 import html
 import logging
 from typing import List, Optional, Dict, Any, Tuple
+from collections import defaultdict  # <-- needed
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -68,9 +69,13 @@ def detect_language(text: str) -> Tuple[Optional[str], float]:
     text = (text or "").strip()
     if not text:
         return None, 0.0
+    project = gcp_project_id()
+    if not project:
+        logger.warning("detect_language skipped: GOOGLE_CLOUD_PROJECT not set")
+        return None, 0.0
     try:
         client = get_translate_client()
-        parent = f"projects/{gcp_project_id()}/locations/{TRANSLATE_LOCATION}"
+        parent = f"projects/{project}/locations/{TRANSLATE_LOCATION}"
         resp = client.detect_language(
             request={
                 "parent": parent,
@@ -107,7 +112,7 @@ class ScrapeResult(BaseModel):
     channel_name: Optional[str] = None
     channel_description: Optional[str] = None
     channel_followers: Optional[int] = None
-    channel_lang: Optional[str] = Field(None, description="Majority language (by Google Translate detect) from first 5 posts")
+    channel_lang: Optional[str] = None
     posts: List[Post]
 
 # ---------------------------
@@ -357,24 +362,25 @@ async def scrape_channel(
                 next_before = _find_next_before_id(soup)
                 url = f"{start_url}?before={next_before}" if next_before else None
 
-        # ---- Language detection over first 5 real texts ----
-        votes: Dict[str, int] = {}
-        conf_sum: Dict[str, float] = {}
-        sample = [p.post_text for p in posts if (p.post_text or "").strip()]
-        for text in sample[:5]:
-            lang, conf = detect_language(text or "")
-            if lang:
-                votes[lang] = votes.get(lang, 0) + 1
-                conf_sum[lang] = conf_sum.get(lang, 0.0) + conf
+        # --- Detect channel language from the first 5 posts with text ---
+        votes: Dict[str, int] = defaultdict(int)
+        conf_sum: Dict[str, float] = defaultdict(float)
 
-        chan_lang = majority_language(votes, conf_sum)
+        sample_texts = [p.post_text for p in posts if p.post_text]
+        for text in sample_texts[:5]:
+            code, conf = detect_language(text[:2000])  # cap length to keep it cheap/fast
+            if code:
+                votes[code] += 1
+                conf_sum[code] += conf
+
+        channel_lang = majority_language(votes, conf_sum)
 
         return ScrapeResult(
             channel_username=username,
             channel_name=channel_name,
             channel_description=channel_description,
             channel_followers=channel_followers,
-            channel_lang=chan_lang,
+            channel_lang=channel_lang,  # <-- fixed name
             posts=posts,
         )
 
