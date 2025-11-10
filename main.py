@@ -119,6 +119,18 @@ class ScrapeResult(BaseModel):
 # Utilities
 # ---------------------------
 
+_LEGACY_LANG_MAP = {
+    "iw": "he",  # Hebrew
+    "ji": "yi",  # Yiddish
+    "in": "id",  # Indonesian
+}
+
+def normalize_lang(code: Optional[str]) -> Optional[str]:
+    if not code:
+        return None
+    code = code.strip().lower()
+    return _LEGACY_LANG_MAP.get(code, code)
+
 def _strip_ws(s: Optional[str]) -> str:
     return (s or "").strip()
 
@@ -379,6 +391,7 @@ async def scrape_channel(
                 conf_sum[code] += conf
 
         channel_lang = majority_language(votes, conf_sum) or "und"  # <-- ensure a value
+        channel_lang = normalize_lang(channel_lang)
 
         return ScrapeResult(
             channel_username=username,
