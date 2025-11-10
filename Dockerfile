@@ -6,20 +6,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8080
 
-# System deps for lxml
+# System deps (lxml needs these)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libxml2-dev \
-    libxslt1.1 libxslt1-dev \
+    libxslt1-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY main.py /app/main.py
 
-# Python deps
+# Install Python deps
 RUN pip install --upgrade pip && pip install \
     fastapi==0.115.5 \
-    uvicorn==0.32.1 \
+    uvicorn[standard]==0.32.1 \
     httpx==0.27.2 \
     beautifulsoup4==4.12.3 \
     lxml==5.3.0 \
@@ -27,5 +26,10 @@ RUN pip install --upgrade pip && pip install \
     pydantic==2.9.2 \
     google-cloud-translate==3.17.1
 
+# Copy app code
+COPY . /app
+
 EXPOSE 8080
+
+# Cloud Run expects the server to bind $PORT
 CMD ["sh","-c","uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]

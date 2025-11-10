@@ -10,7 +10,6 @@ import re
 import html
 import logging
 from typing import List, Optional, Dict, Any, Tuple
-from collections import defaultdict
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -18,11 +17,18 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-# Tolerant import: some environments expose v3 as translate_v3, some as translate
+# google-cloud-translate v3 client import (works whether installed as translate_v3 or translate)
 try:
     from google.cloud import translate_v3 as translate
 except ImportError:  # pragma: no cover
     from google.cloud import translate  # type: ignore
+
+# ---------------------------
+# Logging
+# ---------------------------
+logger = logging.getLogger("tg-scraper")
+logging.basicConfig(level=logging.INFO)
+logger.info("tg-scraper starting; ready to listen")
 
 # ---------------------------
 # Config
@@ -44,49 +50,27 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_\.]+$")
 # Views / counts like "26.8K", "1.2M", "12 345" etc.
 _KNUM_RE = re.compile(r'(\d[\d,.\u202f\u00A0]*)([KkMm]?)$')  # include thin/nbsp spaces
 
-# Translate API location (global is fine for Detect Language)
+# Translate config
 TRANSLATE_LOCATION = os.getenv("TRANSLATE_LOCATION", "global")
+_translate_client: Optional["translate.TranslationServiceClient"] = None
 
-# Logger
-logger = logging.getLogger("tg-scraper")
-logging.basicConfig(level=logging.INFO)
-logger.info("tg-scraper starting; ready to listen")
-
-# ---------------------------
-# Models
-# ---------------------------
-
-_translate_client: Optional[translate.TranslationServiceClient] = None  # type: ignore
-
-
-def get_translate_client() -> translate.TranslationServiceClient:  # type: ignore
+def get_translate_client() -> "translate.TranslationServiceClient":
     global _translate_client
     if _translate_client is None:
-        _translate_client = translate.TranslationServiceClient()  # type: ignore
+        _translate_client = translate.TranslationServiceClient()
     return _translate_client
-
 
 def gcp_project_id() -> str:
     return os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT") or ""
 
-
 def detect_language(text: str) -> Tuple[Optional[str], float]:
-    """
-    Returns (language_code, confidence). If detection fails, returns (None, 0.0).
-    """
+    """Return (language_code, confidence). Safe on errors."""
     text = (text or "").strip()
     if not text:
         return None, 0.0
-
-    project = gcp_project_id()
-    if not project:
-        # If Cloud Run didn't inject project id, fail gracefully
-        logger.debug("GOOGLE_CLOUD_PROJECT not set; skipping language detection.")
-        return None, 0.0
-
     try:
         client = get_translate_client()
-        parent = f"projects/{project}/locations/{TRANSLATE_LOCATION}"
+        parent = f"projects/{gcp_project_id()}/locations/{TRANSLATE_LOCATION}"
         resp = client.detect_language(
             request={
                 "parent": parent,
@@ -94,25 +78,23 @@ def detect_language(text: str) -> Tuple[Optional[str], float]:
                 "mime_type": "text/plain",
             }
         )
-        if not getattr(resp, "languages", None):
+        if not resp.languages:
             return None, 0.0
-        best = max(resp.languages, key=lambda l: float(getattr(l, "confidence", 0.0)))
+        best = max(resp.languages, key=lambda l: getattr(l, "confidence", 0.0))
         return best.language_code, float(getattr(best, "confidence", 0.0))
-    except Exception as e:  # pragma: no cover
-        logger.warning(f"detect_language failed: {e}")
+    except Exception as e:  # keep service resilient
+        logger.warning("detect_language failed: %s", e)
         return None, 0.0
 
-
 def majority_language(votes: Dict[str, int], conf_sum: Dict[str, float]) -> Optional[str]:
-    """
-    Pick language with highest vote count; break ties by higher total confidence.
-    """
+    """Pick language with most votes; break ties by higher total confidence."""
     if not votes:
         return None
-    # max by (count, total_conf)
-    lang, _ = max(votes.items(), key=lambda kv: (kv[1], conf_sum.get(kv[0], 0.0)))
-    return lang
+    return max(votes.items(), key=lambda kv: (kv[1], conf_sum.get(kv[0], 0.0)))[0]
 
+# ---------------------------
+# Models
+# ---------------------------
 
 class Post(BaseModel):
     post_timestamp: Optional[str] = Field(None, description="ISO timestamp from web page")
@@ -120,13 +102,12 @@ class Post(BaseModel):
     post_reactions_count: int = Field(0, description="Sum of all reaction types")
     post_views_count: Optional[int] = Field(None, description="Views shown on post, if present")
 
-
 class ScrapeResult(BaseModel):
     channel_username: str
     channel_name: Optional[str] = None
     channel_description: Optional[str] = None
     channel_followers: Optional[int] = None
-    channel_lang: Optional[str] = None           # <-- NEW: majority language of first 5 posts
+    channel_lang: Optional[str] = Field(None, description="Majority language (by Google Translate detect) from first 5 posts")
     posts: List[Post]
 
 # ---------------------------
@@ -136,14 +117,12 @@ class ScrapeResult(BaseModel):
 def _strip_ws(s: Optional[str]) -> str:
     return (s or "").strip()
 
-
 def _unescape(s: Optional[str]) -> str:
     return html.unescape(s or "")
 
-
-def _parse_knum(text: str) -> int:
+def _parse_knum(text: Optional[str]) -> int:
     """Parse compact numbers like '26.8K', '1.2M', '12 345' into int."""
-    if text is None:
+    if not text:
         return 0
     text = text.replace("\u202f", "").replace("\u00A0", "").replace(" ", "")
     m = _KNUM_RE.search(text)
@@ -161,22 +140,18 @@ def _parse_knum(text: str) -> int:
         num_f *= 1_000_000
     return int(num_f)
 
-
 def _get_emoji_from_el(container: Tag) -> str:
     """Best-effort extraction of the emoji glyph/label across layouts."""
-    # Try common spots
     for sel in ['i.emoji b', 'i b', '.tgme_widget_message_reaction_emoji', '.emoji b', 'b', 'i']:
         node = container.select_one(sel)
         if node:
             txt = node.get_text(strip=True)
             if txt:
                 return txt
-    # Fallback: aria-label/title (custom emoji)
     for attr in ('aria-label', 'title'):
         if val := container.get(attr):
             return val.strip()
     return "UNKNOWN"
-
 
 def _parse_reactions_for_message(msg: Tag) -> Dict[str, Any]:
     """
@@ -184,7 +159,6 @@ def _parse_reactions_for_message(msg: Tag) -> Dict[str, Any]:
     Supports:
       A) Old layout: <span class="tgme_reaction"> … 123 </span>
       B) New layout: .tgme_widget_message_inline_buttons a.tgme_widget_message_reaction
-                     with .tgme_widget_message_reaction_emoji + _count
     """
     by_emoji: Dict[str, int] = {}
 
@@ -209,14 +183,12 @@ def _parse_reactions_for_message(msg: Tag) -> Dict[str, Any]:
     total = sum(by_emoji.values())
     return {"total": total, "by_emoji": by_emoji}
 
-
 def _parse_views_for_message(msg: Tag) -> Optional[int]:
     """Extract views counter as int (e.g., '26.8K')."""
     el = msg.select_one('.tgme_widget_message_views')
     if not el:
         return None
     return _parse_knum(el.get_text(strip=True))
-
 
 def _parse_timestamp_for_message(msg: Tag) -> Optional[str]:
     """Extract ISO timestamp (from <time datetime=...>) if available."""
@@ -225,23 +197,19 @@ def _parse_timestamp_for_message(msg: Tag) -> Optional[str]:
         return t['datetime']
     return None
 
-
 def _message_text(msg: Tag) -> str:
     """Extract visible text content of the post (without footer/meta)."""
-    # Primary text container
     tnode = msg.select_one('.tgme_widget_message_text')
     if tnode:
-        # Replace <br> with newlines for readability
         for br in tnode.select('br'):
             br.replace_with('\n')
         text = tnode.get_text(separator='\n', strip=True)
         return _unescape(text)
     return ""
 
-
 def _parse_channel_header(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
     """Derive channel title/description/followers from header when present."""
-    info: Dict[str, Optional[str] | int] = {}
+    info: Dict[str, Optional[str]] = {}
     title_el = soup.select_one('.tgme_channel_info_header_title, .tgme_channel_info_header_title span')
     if title_el:
         info['name'] = title_el.get_text(strip=True)
@@ -250,7 +218,6 @@ def _parse_channel_header(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
     if desc_el:
         info['description'] = desc_el.get_text(separator="\n", strip=True)
 
-    # follower counter variants
     for sel in [
         '.tgme_channel_info_counter .counter_value',
         '.tgme_channel_info_counter_value',
@@ -262,24 +229,20 @@ def _parse_channel_header(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
             if followers:
                 info['followers'] = followers
                 break
-    return info  # type: ignore[return-value]
-
+    return info
 
 def _extract_messages(soup: BeautifulSoup) -> List[Tag]:
     """Find all message bubbles in the page."""
     return list(soup.select('.tgme_widget_message'))
 
-
 def _find_next_before_id(soup: BeautifulSoup) -> Optional[str]:
     """
     Telegram allows paging with ?before=<post_id>.
-    We try to find the smallest data-post id on the page and subtract 1 as a heuristic,
-    or read next/prev anchors if present.
+    We try to find the smallest data-post id on the page and subtract 1 as a heuristic.
     """
-    posts: List[int] = []
+    posts = []
     for el in soup.select('.tgme_widget_message[data-post]'):
         dp = el.get('data-post', '')
-        # data-post looks like "username/12345"
         parts = dp.split('/')
         if len(parts) == 2 and parts[1].isdigit():
             posts.append(int(parts[1]))
@@ -318,11 +281,9 @@ async def _fetch(client: httpx.AsyncClient, url: str) -> str:
 
 app = FastAPI(title="Telegram Scraper", version="1.1.0")
 
-
 @app.get("/", tags=["health"])
 async def root():
     return {"status": "ok", "service": "tg-scraper"}
-
 
 @app.get("/scrape", response_model=ScrapeResult, tags=["scrape"])
 async def scrape_channel(
@@ -334,9 +295,8 @@ async def scrape_channel(
     if not USERNAME_RE.match(username):
         raise HTTPException(status_code=422, detail="Invalid username format.")
 
-    params: Dict[str, str] = {}
+    params = {}
     if before:
-        # ensure numeric
         if not before.isdigit():
             raise HTTPException(status_code=422, detail="'before' must be a numeric post id.")
         params["before"] = before
@@ -344,9 +304,9 @@ async def scrape_channel(
     start_url = TELEGRAM_BASE + CHANNEL_PATH.format(username=username)
     async with httpx.AsyncClient(follow_redirects=True) as client:
         posts: List[Post] = []
-        channel_name: Optional[str] = None
-        channel_description: Optional[str] = None
-        channel_followers: Optional[int] = None
+        channel_name = None
+        channel_description = None
+        channel_followers = None
 
         url = start_url
         if params:
@@ -360,9 +320,9 @@ async def scrape_channel(
             # Capture channel info on first page
             if channel_name is None:
                 hdr = _parse_channel_header(soup)
-                channel_name = hdr.get("name")  # type: ignore[assignment]
-                channel_description = hdr.get("description")  # type: ignore[assignment]
-                channel_followers = hdr.get("followers")  # type: ignore[assignment]
+                channel_name = hdr.get("name")
+                channel_description = hdr.get("description")
+                channel_followers = hdr.get("followers")
 
             # Parse messages
             msg_nodes = _extract_messages(soup)
@@ -373,14 +333,13 @@ async def scrape_channel(
                 if len(posts) >= limit:
                     break
 
-                # Skip service/system messages if needed
+                # Skip service/system messages
                 if not msg.select_one('.tgme_widget_message_bubble'):
                     continue
 
                 txt = _message_text(msg)
                 ts = _parse_timestamp_for_message(msg)
                 views = _parse_views_for_message(msg)
-
                 reactions = _parse_reactions_for_message(msg)
                 total_reacts = reactions["total"]
 
@@ -396,30 +355,26 @@ async def scrape_channel(
             # Prepare next page
             if len(posts) < limit:
                 next_before = _find_next_before_id(soup)
-                if next_before:
-                    url = f"{start_url}?before={next_before}"
-                else:
-                    url = None
+                url = f"{start_url}?before={next_before}" if next_before else None
 
-        # ---- Language detection on first 5 non-empty posts ----
-        first_texts = [p.post_text for p in posts if (p.post_text and p.post_text.strip())][:5]
-        votes: Dict[str, int] = defaultdict(int)
-        conf_sum: Dict[str, float] = defaultdict(float)
-
-        for t in first_texts:
-            lang, conf = detect_language(t or "")
+        # ---- Language detection over first 5 real texts ----
+        votes: Dict[str, int] = {}
+        conf_sum: Dict[str, float] = {}
+        sample = [p.post_text for p in posts if (p.post_text or "").strip()]
+        for text in sample[:5]:
+            lang, conf = detect_language(text or "")
             if lang:
-                votes[lang] += 1
-                conf_sum[lang] += conf
+                votes[lang] = votes.get(lang, 0) + 1
+                conf_sum[lang] = conf_sum.get(lang, 0.0) + conf
 
-        channel_lang = majority_language(votes, conf_sum)
+        chan_lang = majority_language(votes, conf_sum)
 
         return ScrapeResult(
             channel_username=username,
             channel_name=channel_name,
             channel_description=channel_description,
             channel_followers=channel_followers,
-            channel_lang=channel_lang,        # <-- NEW in response
+            channel_lang=chan_lang,
             posts=posts,
         )
 
