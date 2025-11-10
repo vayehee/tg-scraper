@@ -109,12 +109,13 @@ class Post(BaseModel):
     post_views_count: Optional[int] = Field(None, description="Views shown on post, if present")
 
 class ScrapeResult(BaseModel):
-    channel_username: str
-    channel_name: Optional[str] = None
-    channel_description: Optional[str] = None
-    channel_followers: Optional[int] = None
-    channel_lang: Optional[str] = None
-    channel_avg_posts_day: Optional[float] = None
+    chan_username: str
+    chan_name: Optional[str] = None
+    chan_description: Optional[str] = None
+    chan_subscribers: Optional[int] = None
+    chan_lang: Optional[str] = None
+    chan_avg_posts_day: Optional[int] = None
+    chan_avg_reactions: Optional[int] = None
     posts: List[Post]
 
 # ---------------------------
@@ -298,7 +299,31 @@ def _avg_posts_per_day(posts: List[Post]) -> Optional[float]:
 
     total_posts = sum(day_counts.values())
     avg = total_posts / len(day_counts)
-    return round(avg, 2)
+    return int(round(avg))
+
+def _avg_reactions_per_post(posts: List[Post]) -> Optional[int]:
+    """
+    Return the rounded average of post_reactions_count across all posts.
+    Treats missing counts as 0 if any appear (but your model defaults to 0).
+    """
+    if not posts:
+        return None
+
+    total = 0
+    n = 0
+    for p in posts:
+        try:
+            total += int(p.post_reactions_count or 0)
+            n += 1
+        except Exception:
+            # If a post somehow lacks the field, skip it
+            continue
+
+    if n == 0:
+        return None
+
+    return int(round(total / n))
+
 
 
 # ---------------------------
@@ -357,9 +382,9 @@ async def scrape_channel(
     start_url = TELEGRAM_BASE + CHANNEL_PATH.format(username=username)
     async with httpx.AsyncClient(follow_redirects=True) as client:
         posts: List[Post] = []
-        channel_name = None
-        channel_description = None
-        channel_followers = None
+        chan_name = None
+        chan_description = None
+        chan_subscribers = None
 
         url = start_url
         if params:
@@ -371,11 +396,11 @@ async def scrape_channel(
             soup = BeautifulSoup(html_text, "lxml")
 
             # Capture channel info on first page
-            if channel_name is None:
+            if chan_name is None:
                 hdr = _parse_channel_header(soup)
-                channel_name = hdr.get("name")
-                channel_description = hdr.get("description")
-                channel_followers = hdr.get("followers")
+                chan_name = hdr.get("name")
+                chan_description = hdr.get("description")
+                chan_subscribers = hdr.get("followers")
 
             # Parse messages
             msg_nodes = _extract_messages(soup)
@@ -421,18 +446,21 @@ async def scrape_channel(
                 votes[code] += 1
                 conf_sum[code] += conf
 
-        channel_lang = majority_language(votes, conf_sum) or "und"  # <-- ensure a value
-        channel_lang = normalize_lang(channel_lang)
+        chan_lang = majority_language(votes, conf_sum) or "und"  # <-- ensure a value
+        chan_lang = normalize_lang(chan_lang)
 
-        channel_avg = _avg_posts_per_day(posts)
+        chan_avg_posts = _avg_posts_per_day(posts)
+
+        chan_avg_reactions = _avg_reactions_per_post(posts)
 
         return ScrapeResult(
-            channel_username=username,
-            channel_name=channel_name,
-            channel_description=channel_description,
-            channel_followers=channel_followers,
-            channel_lang=channel_lang,
-            channel_avg_posts_day=channel_avg,
+            chan_username=username,
+            chan_name=chan_name,
+            chan_description=chan_description,
+            chan_subscribers=chan_subscribers,
+            chan_lang=chan_lang,
+            chan_avg_posts=chan_avg_posts,
+            chan_avg_reactions=chan_avg_reactions,
             posts=posts,
         )
 
