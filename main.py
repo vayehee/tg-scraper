@@ -1,5 +1,6 @@
 #main.py
 from fastapi import FastAPI, HTTPException, Query
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 import httpx
 from bs4 import BeautifulSoup
