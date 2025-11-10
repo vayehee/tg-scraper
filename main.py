@@ -107,6 +107,7 @@ class Post(BaseModel):
     post_text: Optional[str] = Field(None, description="Visible text content")
     post_reactions_count: int = Field(0, description="Sum of all reaction types")
     post_views_count: Optional[int] = Field(None, description="Views shown on post, if present")
+    post_comments: Optional[int] = Field(None, description="Number of comments on the post")
 
 class ScrapeResult(BaseModel):
     chan_username: str
@@ -216,6 +217,37 @@ def _parse_timestamp_for_message(msg: Tag) -> Optional[str]:
     if t and t.has_attr('datetime'):
         return t['datetime']
     return None
+
+# --- Utilities: add this helper near the other _parse_* helpers ---
+def _message_comment_count(msg: Tag) -> Optional[int]:
+    """
+    Extract the number of comments for a message.
+    Handles both classic and new inline-button layouts, e.g.:
+      <a class="tgme_widget_message_comments">123 comments</a>
+      .tgme_widget_message_inline_buttons a[href*="comments"]
+    Returns None when no comment link/count is present.
+    """
+    # 1) Classic selector
+    a = msg.select_one('a.tgme_widget_message_comments')
+    if a:
+        cnt = _parse_knum(a.get_text(strip=True))
+        return cnt if cnt > 0 else 0
+
+    # 2) Inline buttons that include a comments link
+    for cand in msg.select('.tgme_widget_message_inline_buttons a'):
+        href = cand.get('href', '')
+        if 'comments' in href:
+            cnt = _parse_knum(cand.get_text(strip=True))
+            return cnt if cnt > 0 else 0
+
+    # 3) Bottom meta area variants sometimes hold comment link
+    a = msg.select_one('.tgme_widget_message_bottom a.tgme_widget_message_comments')
+    if a:
+        cnt = _parse_knum(a.get_text(strip=True))
+        return cnt if cnt > 0 else 0
+
+    return None
+
 
 def _message_text(msg: Tag) -> str:
     """Extract visible text content of the post (without footer/meta)."""
@@ -420,6 +452,7 @@ async def scrape_channel(
                 views = _parse_views_for_message(msg)
                 reactions = _parse_reactions_for_message(msg)
                 total_reacts = reactions["total"]
+                comments = _message_comment_count(msg)
 
                 posts.append(
                     Post(
@@ -427,6 +460,7 @@ async def scrape_channel(
                         post_text=txt or None,
                         post_reactions_count=total_reacts,
                         post_views_count=views,
+                        post_comments=comments,
                     )
                 )
 
