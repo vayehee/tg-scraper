@@ -115,7 +115,7 @@ class ScrapeResult(BaseModel):
     chan_subscribers: Optional[int] = None
     chan_lang: Optional[str] = None
     chan_avg_posts_day: Optional[int] = None
-    chan_avg_reactions: Optional[int] = None
+    chan_avg_reactions_day: Optional[int] = None
     posts: List[Post]
 
 # ---------------------------
