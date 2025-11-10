@@ -6,18 +6,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8080
 
-# Install system deps for lxml, cchardet speedups if needed
+# System deps for lxml
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libxml2-dev \
     libxslt1.1 libxslt1-dev \
-    && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/*
 
-# Copy app
+# App
 WORKDIR /app
 COPY main.py /app/main.py
 
-# Install Python deps
+# Python deps
 RUN pip install --upgrade pip \
  && pip install \
       fastapi==0.115.5 \
@@ -26,7 +26,8 @@ RUN pip install --upgrade pip \
       beautifulsoup4==4.12.3 \
       lxml==5.3.0 \
       tenacity==9.0.0 \
-      pydantic==2.9.2
+      pydantic==2.9.2 \
+      google-cloud-translate==3.17.1
 
 EXPOSE 8080
 

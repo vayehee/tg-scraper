@@ -8,13 +8,15 @@
 import os
 import re
 import html
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 import httpx
 from bs4 import BeautifulSoup, Tag
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from collections import defaultdict
+from google.cloud import translate_v3 as translate
 
 # ---------------------------
 # Config
@@ -37,20 +39,69 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_\.]+$")
 _KNUM_RE = re.compile(r'(\d[\d,.\u202f\u00A0]*)([KkMm]?)$')  # include thin/nbsp spaces
 
 # ---------------------------
-# Models
+# Models & Translate helpers
 # ---------------------------
+
+TRANSLATE_LOCATION = os.getenv("TRANSLATE_LOCATION", "global")
+_translate_client: Optional[translate.TranslationServiceClient] = None
+
+def get_translate_client() -> translate.TranslationServiceClient:
+    global _translate_client
+    if _translate_client is None:
+        _translate_client = translate.TranslationServiceClient()
+    return _translate_client
+
+def gcp_project_id() -> str:
+    return os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT") or ""
+
+def detect_language(text: str) -> Tuple[Optional[str], float]:
+    """
+    Returns (language_code, confidence). If detection fails, returns (None, 0.0).
+    """
+    text = (text or "").strip()
+    if not text:
+        return None, 0.0
+    try:
+        client = get_translate_client()
+        parent = f"projects/{gcp_project_id()}/locations/{TRANSLATE_LOCATION}"
+        resp = client.detect_language(
+            request={
+                "parent": parent,
+                "content": text,
+                "mime_type": "text/plain",
+            }
+        )
+        if not resp.languages:
+            return None, 0.0
+        # pick top by confidence
+        best = max(resp.languages, key=lambda l: getattr(l, "confidence", 0.0))
+        return best.language_code, float(getattr(best, "confidence", 0.0))
+    except Exception:
+        # keep service resilient; just don’t crash on detection errors
+        return None, 0.0
+
+def majority_language(votes: Dict[str, int], conf_sum: Dict[str, float]) -> Optional[str]:
+    """
+    Pick language with highest vote count; break ties by higher total confidence.
+    """
+    if not votes:
+        return None
+    lang, _ = max(votes.items(), key=lambda kv: (kv[1], conf_sum.get(kv[0], 0.0)))
+    return lang
 
 class Post(BaseModel):
     post_timestamp: Optional[str] = Field(None, description="ISO timestamp from web page")
     post_text: Optional[str] = Field(None, description="Visible text content")
     post_reactions_count: int = Field(0, description="Sum of all reaction types")
     post_views_count: Optional[int] = Field(None, description="Views shown on post, if present")
+    detected_lang: Optional[str] = Field(None, description="Detected language code (first 5 posts only)")
 
 class ScrapeResult(BaseModel):
     channel_username: str
     channel_name: Optional[str] = None
     channel_description: Optional[str] = None
     channel_followers: Optional[int] = None
+    channel_lang: Optional[str] = None
     posts: List[Post]
 
 # ---------------------------
@@ -232,7 +283,7 @@ async def _fetch(client: httpx.AsyncClient, url: str) -> str:
 # FastAPI app
 # ---------------------------
 
-app = FastAPI(title="Telegram Scraper", version="1.0.0")
+app = FastAPI(title="Telegram Scraper", version="1.1.0")
 
 
 @app.get("/", tags=["health"])
@@ -318,11 +369,25 @@ async def scrape_channel(
                 else:
                     url = None
 
+        # -------- Language detection on first 5 posts --------
+        lang_votes: Dict[str, int] = defaultdict(int)
+        lang_conf_sum: Dict[str, float] = defaultdict(float)
+
+        for p in posts[:5]:
+            code, conf = detect_language(p.post_text or "")
+            if code:
+                p.detected_lang = code  # annotate post
+                lang_votes[code] += 1
+                lang_conf_sum[code] += conf
+
+        channel_lang = majority_language(lang_votes, lang_conf_sum)
+
         return ScrapeResult(
             channel_username=username,
             channel_name=channel_name,
             channel_description=channel_description,
             channel_followers=channel_followers,
+            channel_lang=channel_lang,
             posts=posts,
         )
 
