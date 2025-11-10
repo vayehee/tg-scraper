@@ -493,10 +493,10 @@ async def scrape_channel(
             # Capture channel info on first page
             if chan_name is None:
                 hdr = _parse_channel_header(soup)
-                chan_img = _parse_channel_image(soup)
                 chan_name = hdr.get("name")
                 chan_description = hdr.get("description")
                 chan_subscribers = hdr.get("followers")
+                chan_img = _parse_channel_image(soup)
 
             # Parse messages
             msg_nodes = _extract_messages(soup)
@@ -543,7 +543,7 @@ async def scrape_channel(
             if code:
                 votes[code] += 1
                 conf_sum[code] += conf
-
+        
         chan_lang = majority_language(votes, conf_sum) or "und"  # <-- ensure a value
         chan_lang = normalize_lang(chan_lang)
 
@@ -552,7 +552,7 @@ async def scrape_channel(
         chan_avg_reactions_post = _avg_reactions_per_post(posts)
 
         return ScrapeResult(
-            chan_image=chan_image,
+            chan_img=chan_img,
             chan_username=username,
             chan_name=chan_name,
             chan_description=chan_description,
