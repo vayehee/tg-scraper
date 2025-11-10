@@ -10,7 +10,8 @@ import re
 import html
 import logging
 from typing import List, Optional, Dict, Any, Tuple
-from collections import defaultdict  # <-- needed
+from collections import defaultdict
+from datetime import datetime
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -37,9 +38,9 @@ logger.info("tg-scraper starting; ready to listen")
 
 TELEGRAM_BASE = "https://t.me"
 CHANNEL_PATH = "/s/{username}"
-DEFAULT_LIMIT = 50           # max posts to return per call
-MAX_LIMIT = 200
-REQUEST_TIMEOUT = 20.0
+DEFAULT_LIMIT = 300          # max posts to return per call
+MAX_LIMIT = 500
+REQUEST_TIMEOUT = 30.0
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -113,6 +114,7 @@ class ScrapeResult(BaseModel):
     channel_description: Optional[str] = None
     channel_followers: Optional[int] = None
     channel_lang: Optional[str] = None
+    channel_avg_posts_day: Optional[float] = None
     posts: List[Post]
 
 # ---------------------------
@@ -270,6 +272,35 @@ def _find_next_before_id(soup: BeautifulSoup) -> Optional[str]:
         return None
     return str(min_id - 1)
 
+def _avg_posts_per_day(posts: List[Post]) -> Optional[float]:
+    """
+    Group posts by calendar date (UTC offset respected if present) and
+    return average posts per distinct day. Returns None if no dated posts.
+    """
+    day_counts: Dict[str, int] = defaultdict(int)
+
+    for p in posts:
+        ts = p.post_timestamp
+        if not ts:
+            continue
+        try:
+            # supports '...Z' and '+00:00' etc.
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            day_key = str(dt.date())  # 'YYYY-MM-DD'
+            day_counts[day_key] += 1
+        except Exception:
+            # Fallback: naive slice if ISO parsing fails
+            if len(ts) >= 10 and ts[4] == '-' and ts[7] == '-':
+                day_counts[ts[:10]] += 1
+
+    if not day_counts:
+        return None
+
+    total_posts = sum(day_counts.values())
+    avg = total_posts / len(day_counts)
+    return round(avg, 2)
+
+
 # ---------------------------
 # HTTP client
 # ---------------------------
@@ -393,12 +424,15 @@ async def scrape_channel(
         channel_lang = majority_language(votes, conf_sum) or "und"  # <-- ensure a value
         channel_lang = normalize_lang(channel_lang)
 
+        channel_avg = _avg_posts_per_day(posts)
+
         return ScrapeResult(
             channel_username=username,
             channel_name=channel_name,
             channel_description=channel_description,
             channel_followers=channel_followers,
-            channel_lang=channel_lang,  # <-- always present
+            channel_lang=channel_lang,
+            channel_avg_posts_day=channel_avg,
             posts=posts,
         )
 
