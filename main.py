@@ -290,7 +290,12 @@ app = FastAPI(title="Telegram Scraper", version="1.1.0")
 async def root():
     return {"status": "ok", "service": "tg-scraper"}
 
-@app.get("/scrape", response_model=ScrapeResult, tags=["scrape"])
+@app.get(
+    "/scrape",
+    response_model=ScrapeResult,
+    response_model_exclude_none=False,   # <-- keep keys even if None
+    tags=["scrape"],
+)
 async def scrape_channel(
     username: str = Query(..., pattern=r"^[A-Za-z0-9_\.]+$", description="Telegram channel username"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description="Max posts to return"),
@@ -373,14 +378,14 @@ async def scrape_channel(
                 votes[code] += 1
                 conf_sum[code] += conf
 
-        channel_lang = majority_language(votes, conf_sum)
+        channel_lang = majority_language(votes, conf_sum) or "und"  # <-- ensure a value
 
         return ScrapeResult(
             channel_username=username,
             channel_name=channel_name,
             channel_description=channel_description,
             channel_followers=channel_followers,
-            channel_lang=channel_lang,  # <-- fixed name
+            channel_lang=channel_lang,  # <-- always present
             posts=posts,
         )
 
