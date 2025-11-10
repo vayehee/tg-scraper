@@ -110,6 +110,7 @@ class Post(BaseModel):
     post_comments: Optional[int] = Field(None, description="Number of comments on the post")
 
 class ScrapeResult(BaseModel):
+    chan_img: Optional[str] = None
     chan_username: str
     chan_name: Optional[str] = None
     chan_description: Optional[str] = None
@@ -173,6 +174,67 @@ def _get_emoji_from_el(container: Tag) -> str:
         if val := container.get(attr):
             return val.strip()
     return "UNKNOWN"
+
+def _abs_url(u: Optional[str]) -> Optional[str]:
+    """Return absolute URL for Telegram-relative paths; else pass through."""
+    if not u:
+        return None
+    u = u.strip()
+    if not u:
+        return None
+    if u.startswith("http://") or u.startswith("https://"):
+        return u
+    if u.startswith("//"):
+        return "https:" + u
+    if u.startswith("/"):
+        return TELEGRAM_BASE + u
+    return u
+
+def _parse_channel_image(soup: BeautifulSoup) -> Optional[str]:
+    """
+    Extract channel image URL from the page.
+    Priority:
+      1) <meta property="og:image" content="...">
+      2) <link rel="image_src" href="...">
+      3) Common header photo selectors used by Telegram pages.
+    Returns an absolute URL or None.
+    """
+    # 1) OpenGraph image
+    og = soup.find("meta", attrs={"property": "og:image"})
+    if og and og.get("content"):
+        return _abs_url(og["content"])
+
+    # 2) Older/alternate hint
+    link_img = soup.find("link", attrs={"rel": "image_src"})
+    if link_img and link_img.get("href"):
+        return _abs_url(link_img["href"])
+
+    # 3) Header photo fallbacks (Telegram’s HTML varies by layout/AB tests)
+    candidates = [
+        # Channel header photo in many layouts:
+        ".tgme_channel_info_header_photo img",
+        # Page-level photo (groups/chats sometimes use this):
+        ".tgme_page .tgme_page_photo img",
+        # Alternate class used historically:
+        "img.tgme_page_photo_image",
+        # Another occasional structure:
+        ".tgme_channel_info .tgme_page_photo_image img",
+    ]
+    for sel in candidates:
+        el = soup.select_one(sel)
+        if not el:
+            continue
+        # Prefer srcset (highest res) if present
+        if el.has_attr("srcset"):
+            # srcset is like "url1 1x, url2 2x"; pick the last (typically highest res)
+            parts = [p.strip().split(" ")[0] for p in el["srcset"].split(",") if p.strip()]
+            if parts:
+                return _abs_url(parts[-1])
+        if el.has_attr("src") and el["src"]:
+            return _abs_url(el["src"])
+
+    return None
+
 
 def _parse_reactions_for_message(msg: Tag) -> Dict[str, Any]:
     """
@@ -422,6 +484,7 @@ async def scrape_channel(
         if params:
             url = url + "?" + "&".join([f"{k}={v}" for k, v in params.items()])
 
+        chan_img = None
         # Iterate pages until we fill 'limit' or no more pages
         while len(posts) < limit and url:
             html_text = await _fetch(client, url)
@@ -430,6 +493,7 @@ async def scrape_channel(
             # Capture channel info on first page
             if chan_name is None:
                 hdr = _parse_channel_header(soup)
+                chan_img = _parse_channel_image(soup)
                 chan_name = hdr.get("name")
                 chan_description = hdr.get("description")
                 chan_subscribers = hdr.get("followers")
@@ -488,6 +552,7 @@ async def scrape_channel(
         chan_avg_reactions_post = _avg_reactions_per_post(posts)
 
         return ScrapeResult(
+            chan_image=chan_image,
             chan_username=username,
             chan_name=chan_name,
             chan_description=chan_description,
