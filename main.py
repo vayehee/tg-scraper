@@ -6,6 +6,10 @@ from bs4 import BeautifulSoup
 import re
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("tg-scraper")
+
 TG_BASE = "https://t.me/s"
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -244,3 +248,11 @@ async def scrape(username: str = Query(..., min_length=2, max_length=64, pattern
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
+
+@app.get("/")
+async def index():
+    return {"service": "tg-scraper", "status": "ok", "docs": "/docs", "health": "/healthz"}
+
+@app.on_event("startup")
+async def on_startup():
+    logger.info("tg-scraper starting; ready to listen")
