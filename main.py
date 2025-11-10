@@ -449,9 +449,9 @@ async def scrape_channel(
         chan_lang = majority_language(votes, conf_sum) or "und"  # <-- ensure a value
         chan_lang = normalize_lang(chan_lang)
 
-        chan_avg_posts = _avg_posts_per_day(posts)
+        chan_avg_posts_day = _avg_posts_per_day(posts)
 
-        chan_avg_reactions = _avg_reactions_per_post(posts)
+        chan_avg_reactions_day = _avg_reactions_per_post(posts)
 
         return ScrapeResult(
             chan_username=username,
@@ -459,8 +459,8 @@ async def scrape_channel(
             chan_description=chan_description,
             chan_subscribers=chan_subscribers,
             chan_lang=chan_lang,
-            chan_avg_posts=chan_avg_posts,
-            chan_avg_reactions=chan_avg_reactions,
+            chan_avg_posts_day=chan_avg_posts_day,
+            chan_avg_reactions_day=chan_avg_reactions_day,
             posts=posts,
         )
 
