@@ -115,7 +115,7 @@ class ScrapeResult(BaseModel):
     chan_subscribers: Optional[int] = None
     chan_lang: Optional[str] = None
     chan_avg_posts_day: Optional[int] = None
-    chan_avg_reactions_day: Optional[int] = None
+    chan_avg_reactions_post: Optional[int] = None
     posts: List[Post]
 
 # ---------------------------
@@ -451,7 +451,7 @@ async def scrape_channel(
 
         chan_avg_posts_day = _avg_posts_per_day(posts)
 
-        chan_avg_reactions_day = _avg_reactions_per_post(posts)
+        chan_avg_reactions_post = _avg_reactions_per_post(posts)
 
         return ScrapeResult(
             chan_username=username,
@@ -460,7 +460,7 @@ async def scrape_channel(
             chan_subscribers=chan_subscribers,
             chan_lang=chan_lang,
             chan_avg_posts_day=chan_avg_posts_day,
-            chan_avg_reactions_day=chan_avg_reactions_day,
+            chan_avg_reactions_post=chan_avg_reactions_post,
             posts=posts,
         )
 
