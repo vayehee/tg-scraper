@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # App code
 COPY main.py .
+COPY gpt.py .
 
 # Cloud Run port
 ENV PORT=8080
