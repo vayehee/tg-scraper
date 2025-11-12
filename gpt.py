@@ -133,7 +133,7 @@ def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
         "Channel header:\n"
         f"{head}\n\n"
         "Channel language:\n"
-        f"{scrape.get("chan_lang")}\n\n"
+        f"{head.get('chan_lang')}\n\n"
         "Sample of recent posts:\n"
         f"{pruned}\n\n"
         "Return ONLY the JSON object described above."
