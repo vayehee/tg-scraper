@@ -20,6 +20,27 @@ RETRY_BASE_DELAY = float(os.getenv("OPENAI_RETRY_BASE_DELAY", "0.6"))
 _client: Optional[OpenAI] = None
 
 
+TOPIC_CHOICES = [
+    "News",
+    "Politics",
+    "Business",
+    "Finance",
+    "Tech",
+    "Cybersecurity",
+    "Lifestyle",
+    "Sports",
+    "Education",
+    "OSINT",
+    "NSFW",
+    "Memes",
+    "Deals",
+    "Gaming",
+    "Health",
+    "Culture",
+    "Unknown",
+]
+
+
 def get_openai_client() -> OpenAI:
     """
     Lazily initialize the OpenAI client (uses OPENAI_API_KEY env var).
@@ -102,61 +123,95 @@ def _compact_payload(sr: Dict[str, Any],
         })
     return slim
 
-
-def chan_analysis(
-    scrape_result_obj: Any,
-    prompt: str,
-    *,
-    model: Optional[str] = None,
-    max_output_tokens: Optional[int] = None,
-    max_posts: int = 120,
-    max_chars_per_post: int = 500,
-) -> str:
+def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
     """
-    Run a custom analysis prompt against the channel's scraped data.
-
-    Args:
-        scrape_result_obj: ScrapeResult Pydantic object or dict.
-        prompt: The user prompt/instruction you will define.
-        model: Optional override of the OpenAI model.
-        max_output_tokens: Optional override for max output tokens.
-        max_posts: Cap the number of posts sent to the LLM (token safety).
-        max_chars_per_post: Truncate each post's text (token safety).
-
-    Returns:
-        LLM response text (string). Empty string on handled failure.
+    Build a compact, instruction-heavy prompt that forces a JSON-only reply.
+    Uses global TOPIC_CHOICES for the allowed 'chan_topic' values.
     """
-    sr = _to_dict(scrape_result_obj)
-    slim = _compact_payload(sr, max_posts=max_posts, max_chars_per_post=max_chars_per_post)
+    head = {
+        "chan_username": scrape.get("chan_username"),
+        "chan_name": scrape.get("chan_name"),
+        "chan_description": (scrape.get("chan_description") or "")[:800],
+        "chan_subscribers": scrape.get("chan_subscribers"),
+        "chan_lang": scrape.get("chan_lang"),
+        "chan_avg_posts_day": scrape.get("chan_avg_posts_day"),
+        "chan_avg_reactions_post": scrape.get("chan_avg_reactions_post"),
+    }
 
-    system_msg = (
-        "You are a precise analyst. Use only the provided JSON to answer. "
-        "If data is missing, say so explicitly."
+    posts = scrape.get("posts") or []
+    pruned = []
+    max_posts = 80   # keep analysis affordable but informative
+    max_text = 400   # snippet per post
+    for p in posts[:max_posts]:
+        pruned.append({
+            "post_timestamp": p.get("post_timestamp"),
+            "post_text": (p.get("post_text") or "")[:max_text],
+            "post_reactions_count": p.get("post_reactions_count"),
+            "post_views_count": p.get("post_views_count"),
+            "post_comments": p.get("post_comments"),
+        })
+
+    topics_block = "\n".join(f"- {t}" for t in TOPIC_CHOICES)
+
+    return (
+        "You are a strict JSON classifier. OUTPUT ONLY JSON. No prose, no code fences, no commentary.\n"
+        "Schema:\n"
+        "{\n"
+        '  "chan_topic": "<ONE of the allowed topics, exact match>",\n'
+        '  "chan_focus": "<3 words or fewer>",\n'
+        '  "chan_geotarget": "<English place name or null>"\n'
+        "}\n\n"
+        "Rules:\n"
+        f"- Allowed topics (choose EXACTLY one; if none fits, use \"Unknown\"): \n{topics_block}\n"
+        "- chan_focus must be ≤3 words (e.g., \"crypto hacks\", \"local city news\").\n"
+        "- chan_geotarget: infer the audience location from content (country preferred; else region/city). Use null if unclear.\n"
+        "- If evidence is weak, be conservative and use \"Unknown\" or null.\n"
+        "- DO NOT add extra keys. DO NOT add comments. DO NOT add markdown.\n\n"
+        "Channel header:\n"
+        f"{head}\n\n"
+        "Sample of recent posts:\n"
+        f"{pruned}\n\n"
+        "Return ONLY the JSON object described above."
     )
 
-    client = get_openai_client()
-    use_model = model or OPENAI_MODEL
-    use_max_tokens = max_output_tokens or MAX_OUTPUT_TOKENS
 
-    def _call():
-        return client.responses.create(
-            model=use_model,
-            input=[
-                {"role": "system", "content": system_msg},
-                {
-                    "role": "user",
-                    "content": (
-                        f"{prompt}\n\n"
-                        f"Here is the channel data as JSON:\n{slim}"
-                    ),
-                },
-            ],
-            max_output_tokens=use_max_tokens,
-        )
+
+def chan_analysis(
+    scrape: Dict[str, Any],
+    model: str = DEFAULT_MODEL,
+) -> Dict[str, Any]:
+    """
+    Classify a channel into JSON fields using the global TOPIC_CHOICES:
+      - chan_topic (one of TOPIC_CHOICES or 'Unknown')
+      - chan_focus (<= 3 words)
+      - chan_geotarget (English place name or null)
+
+    Returns a Python dict parsed from the model's JSON response.
+    """
+    system_msg = (
+        "You are a careful analyst. Follow the user's schema exactly. "
+        "If information is insufficient, use 'Unknown' or null. "
+        "Never output anything but JSON."
+    )
+    user_prompt = _make_chan_json_prompt(scrape)
 
     try:
-        resp = _retryable_call(_call)
-        return (resp.output_text or "").strip()
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            # If your model supports JSON mode, you can enable:
+            # response_format={"type": "json_object"},
+        )
+        text = resp.choices[0].message.content.strip()
+        try:
+            return json.loads(text)
+        except Exception:
+            cleaned = text.strip().strip("`")
+            cleaned = re.sub(r"^json\n", "", cleaned, flags=re.I)
+            return json.loads(cleaned)
     except Exception as e:
-        logger.warning("chan_analysis error: %s", e)
-        return ""
+        raise RuntimeError(f"chan_analysis failed: {e}") from e

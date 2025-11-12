@@ -576,9 +576,8 @@ async def scrape_channel(
             posts=posts,
         )
         '''
-    
-    return chan_analysis(ScrapeResultObj, prompt="Analyze the Telegram channel data and provide a summary.")
-
+        analysis = chan_analysis(scrape=ScrapeResultObj.model_dump())
+    return analysis
 # ---------------------------
 # Local dev entry (optional)
 # ---------------------------
