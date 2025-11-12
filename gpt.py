@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import time
+import json
+import re
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -18,7 +20,6 @@ RETRY_MAX = int(os.getenv("OPENAI_RETRY_MAX", "3"))
 RETRY_BASE_DELAY = float(os.getenv("OPENAI_RETRY_BASE_DELAY", "0.6"))
 
 _client: Optional[OpenAI] = None
-
 
 TOPIC_CHOICES = [
     "News",
@@ -40,21 +41,15 @@ TOPIC_CHOICES = [
     "Unknown",
 ]
 
-
 def get_openai_client() -> OpenAI:
-    """
-    Lazily initialize the OpenAI client (uses OPENAI_API_KEY env var).
-    """
+    """Lazily initialize the OpenAI client (uses OPENAI_API_KEY env var)."""
     global _client
     if _client is None:
         _client = OpenAI()
     return _client
 
-
 def _retryable_call(fn, *args, **kwargs):
-    """
-    Minimal retry wrapper for 429/5xx/timeouts with exponential backoff.
-    """
+    """Minimal retry wrapper for 429/5xx/timeouts with exponential backoff."""
     delay = RETRY_BASE_DELAY
     for attempt in range(1, RETRY_MAX + 1):
         try:
@@ -71,62 +66,24 @@ def _retryable_call(fn, *args, **kwargs):
         delay *= 2
     return fn(*args, **kwargs)
 
-
 def _to_dict(obj: Any) -> Dict[str, Any]:
-    """
-    Normalize ScrapeResult (Pydantic) or dict-like into a plain dict.
-    """
-    # Pydantic v2
+    """Normalize Pydantic model or dict-like into a plain dict."""
     if hasattr(obj, "model_dump") and callable(obj.model_dump):
         return obj.model_dump()
-    # Pydantic v1
     if hasattr(obj, "dict") and callable(obj.dict):
         return obj.dict()
-    # Already a dict
     if isinstance(obj, dict):
         return obj
-    # Fallback: best-effort string
     return {"_raw": str(obj)}
-
 
 def _trim_text(s: Optional[str], limit: int) -> str:
     s = (s or "").strip().replace("\r", " ")
     return (s[:limit] + "…") if len(s) > limit else s
 
-
-def _compact_payload(sr: Dict[str, Any],
-                     max_posts: int = 120,
-                     max_chars_per_post: int = 500) -> Dict[str, Any]:
-    """
-    Reduce payload size for LLM while keeping signal.
-    """
-    slim: Dict[str, Any] = {
-        "chan_username": sr.get("chan_username"),
-        "chan_name": sr.get("chan_name"),
-        "chan_description": _trim_text(sr.get("chan_description"), 1200),
-        "chan_subscribers": sr.get("chan_subscribers"),
-        "chan_lang": sr.get("chan_lang"),
-        "chan_avg_posts_day": sr.get("chan_avg_posts_day"),
-        "chan_avg_reactions_post": sr.get("chan_avg_reactions_post"),
-        "chan_img": sr.get("chan_img"),
-        "posts": []
-    }
-
-    posts: List[Dict[str, Any]] = sr.get("posts") or []
-    for p in posts[:max_posts]:
-        slim["posts"].append({
-            "post_timestamp": p.get("post_timestamp"),
-            "post_text": _trim_text(p.get("post_text"), max_chars_per_post),
-            "post_reactions_count": p.get("post_reactions_count"),
-            "post_views_count": p.get("post_views_count"),
-            "post_comments": p.get("post_comments"),
-        })
-    return slim
-
 def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
     """
-    Build a compact, instruction-heavy prompt that forces a JSON-only reply.
-    Uses global TOPIC_CHOICES for the allowed 'chan_topic' values.
+    Build an instruction-heavy prompt that forces a JSON-only reply.
+    Uses global TOPIC_CHOICES for allowed 'chan_topic' values.
     """
     head = {
         "chan_username": scrape.get("chan_username"),
@@ -174,20 +131,19 @@ def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
         "Return ONLY the JSON object described above."
     )
 
-
-
 def chan_analysis(
     scrape: Dict[str, Any],
-    model: str = DEFAULT_MODEL,
+    model: str = OPENAI_MODEL,
 ) -> Dict[str, Any]:
     """
-    Classify a channel into JSON fields using the global TOPIC_CHOICES:
+    Classify a channel into:
       - chan_topic (one of TOPIC_CHOICES or 'Unknown')
       - chan_focus (<= 3 words)
       - chan_geotarget (English place name or null)
-
-    Returns a Python dict parsed from the model's JSON response.
     """
+    # Ensure we always have a plain dict
+    scrape = _to_dict(scrape)
+
     system_msg = (
         "You are a careful analyst. Follow the user's schema exactly. "
         "If information is insufficient, use 'Unknown' or null. "
@@ -195,15 +151,19 @@ def chan_analysis(
     )
     user_prompt = _make_chan_json_prompt(scrape)
 
+    client = get_openai_client()
+
     try:
-        resp = client.chat.completions.create(
+        # If your model supports JSON mode, uncomment the response_format:
+        resp = _retryable_call(
+            client.chat.completions.create,
             model=model,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            # If your model supports JSON mode, you can enable:
+            max_tokens=MAX_OUTPUT_TOKENS,
             # response_format={"type": "json_object"},
         )
         text = resp.choices[0].message.content.strip()

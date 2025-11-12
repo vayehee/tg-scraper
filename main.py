@@ -9,6 +9,7 @@ import os
 import re
 import html
 import logging
+import asyncio
 from typing import List, Optional, Dict, Any, Tuple
 from collections import defaultdict
 from datetime import datetime
@@ -24,6 +25,8 @@ try:
     from google.cloud import translate_v3 as translate
 except ImportError:  # pragma: no cover
     from google.cloud import translate  # type: ignore
+
+from gpt import chan_analysis
 
 # ---------------------------
 # Logging
@@ -101,6 +104,13 @@ def majority_language(votes: Dict[str, int], conf_sum: Dict[str, float]) -> Opti
 # ---------------------------
 # Models
 # ---------------------------
+
+def _model_to_dict(m: BaseModel) -> Dict[str, Any]:
+    # pydantic v2
+    if hasattr(m, "model_dump"):
+        return m.model_dump()
+    # pydantic v1
+    return m.dict()
 
 class Post(BaseModel):
     post_timestamp: Optional[str] = Field(None, description="ISO timestamp from web page")
@@ -211,13 +221,9 @@ def _parse_channel_image(soup: BeautifulSoup) -> Optional[str]:
 
     # 3) Header photo fallbacks (Telegram’s HTML varies by layout/AB tests)
     candidates = [
-        # Channel header photo in many layouts:
         ".tgme_channel_info_header_photo img",
-        # Page-level photo (groups/chats sometimes use this):
         ".tgme_page .tgme_page_photo img",
-        # Alternate class used historically:
         "img.tgme_page_photo_image",
-        # Another occasional structure:
         ".tgme_channel_info .tgme_page_photo_image img",
     ]
     for sel in candidates:
@@ -226,7 +232,6 @@ def _parse_channel_image(soup: BeautifulSoup) -> Optional[str]:
             continue
         # Prefer srcset (highest res) if present
         if el.has_attr("srcset"):
-            # srcset is like "url1 1x, url2 2x"; pick the last (typically highest res)
             parts = [p.strip().split(" ")[0] for p in el["srcset"].split(",") if p.strip()]
             if parts:
                 return _abs_url(parts[-1])
@@ -234,7 +239,6 @@ def _parse_channel_image(soup: BeautifulSoup) -> Optional[str]:
             return _abs_url(el["src"])
 
     return None
-
 
 def _parse_reactions_for_message(msg: Tag) -> Dict[str, Any]:
     """
@@ -280,7 +284,6 @@ def _parse_timestamp_for_message(msg: Tag) -> Optional[str]:
         return t['datetime']
     return None
 
-# --- Utilities: add this helper near the other _parse_* helpers ---
 def _message_comment_count(msg: Tag) -> Optional[int]:
     """
     Extract the number of comments for a message.
@@ -309,7 +312,6 @@ def _message_comment_count(msg: Tag) -> Optional[int]:
         return cnt if cnt > 0 else 0
 
     return None
-
 
 def _message_text(msg: Tag) -> str:
     """Extract visible text content of the post (without footer/meta)."""
@@ -367,7 +369,7 @@ def _find_next_before_id(soup: BeautifulSoup) -> Optional[str]:
         return None
     return str(min_id - 1)
 
-def _avg_posts_per_day(posts: List[Post]) -> Optional[float]:
+def _avg_posts_per_day(posts: List[Post]) -> Optional[int]:
     """
     Group posts by calendar date (UTC offset respected if present) and
     return average posts per distinct day. Returns None if no dated posts.
@@ -410,15 +412,12 @@ def _avg_reactions_per_post(posts: List[Post]) -> Optional[int]:
             total += int(p.post_reactions_count or 0)
             n += 1
         except Exception:
-            # If a post somehow lacks the field, skip it
             continue
 
     if n == 0:
         return None
 
     return int(round(total / n))
-
-
 
 # ---------------------------
 # HTTP client
@@ -454,14 +453,15 @@ async def root():
 
 @app.get(
     "/scrape",
-    response_model=ScrapeResult,
-    response_model_exclude_none=False,   # <-- keep keys even if None
+    response_model=Dict[str, Any],
+    response_model_exclude_none=False,   # keep keys even if None
     tags=["scrape"],
 )
 async def scrape_channel(
     username: str = Query(..., pattern=r"^[A-Za-z0-9_\.]+$", description="Telegram channel username"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description="Max posts to return"),
     before: Optional[str] = Query(None, description="Fetch older messages before numeric post id"),
+    include_analysis: bool = Query(False, description="Also run LLM analysis"),
 ):
     # Validate username explicitly to give a cleaner error than 500
     if not USERNAME_RE.match(username):
@@ -479,12 +479,12 @@ async def scrape_channel(
         chan_name = None
         chan_description = None
         chan_subscribers = None
+        chan_img = None
 
         url = start_url
         if params:
             url = url + "?" + "&".join([f"{k}={v}" for k, v in params.items()])
 
-        chan_img = None
         # Iterate pages until we fill 'limit' or no more pages
         while len(posts) < limit and url:
             html_text = await _fetch(client, url)
@@ -533,51 +533,48 @@ async def scrape_channel(
                 next_before = _find_next_before_id(soup)
                 url = f"{start_url}?before={next_before}" if next_before else None
 
-        # --- Detect channel language from the first 5 posts with text ---
-        votes: Dict[str, int] = defaultdict(int)
-        conf_sum: Dict[str, float] = defaultdict(float)
+    # --- Detect channel language from the first 5 posts with text ---
+    votes: Dict[str, int] = defaultdict(int)
+    conf_sum: Dict[str, float] = defaultdict(float)
 
-        sample_texts = [p.post_text for p in posts if p.post_text]
-        for text in sample_texts[:5]:
-            code, conf = detect_language(text[:2000])  # cap length to keep it cheap/fast
-            if code:
-                votes[code] += 1
-                conf_sum[code] += conf
-        
-        chan_lang = majority_language(votes, conf_sum) or "und"  # <-- ensure a value
-        chan_lang = normalize_lang(chan_lang)
+    sample_texts = [p.post_text for p in posts if p.post_text]
+    for text in sample_texts[:5]:
+        code, conf = detect_language(text[:2000])  # cap length to keep it cheap/fast
+        if code:
+            votes[code] += 1
+            conf_sum[code] += conf
 
-        chan_avg_posts_day = _avg_posts_per_day(posts)
+    chan_lang = majority_language(votes, conf_sum) or "und"  # ensure a value
+    chan_lang = normalize_lang(chan_lang)
 
-        chan_avg_reactions_post = _avg_reactions_per_post(posts)
+    chan_avg_posts_day = _avg_posts_per_day(posts)
+    chan_avg_reactions_post = _avg_reactions_per_post(posts)
 
-        ScrapeResultObj = ScrapeResult(
-            chan_img=chan_img,
-            chan_username=username,
-            chan_name=chan_name,
-            chan_description=chan_description,
-            chan_subscribers=chan_subscribers,
-            chan_lang=chan_lang,
-            chan_avg_posts_day=chan_avg_posts_day,
-            chan_avg_reactions_post=chan_avg_reactions_post,
-            posts=posts,
-        )
-        
-        '''
-        return ScrapeResult(
-            chan_img=chan_img,
-            chan_username=username,
-            chan_name=chan_name,
-            chan_description=chan_description,
-            chan_subscribers=chan_subscribers,
-            chan_lang=chan_lang,
-            chan_avg_posts_day=chan_avg_posts_day,
-            chan_avg_reactions_post=chan_avg_reactions_post,
-            posts=posts,
-        )
-        '''
-        analysis = chan_analysis(scrape=ScrapeResultObj.model_dump())
-    return analysis
+    scrape_obj = ScrapeResult(
+        chan_img=chan_img,
+        chan_username=username,
+        chan_name=chan_name,
+        chan_description=chan_description,
+        chan_subscribers=chan_subscribers,
+        chan_lang=chan_lang,
+        chan_avg_posts_day=chan_avg_posts_day,
+        chan_avg_reactions_post=chan_avg_reactions_post,
+        posts=posts,
+    )
+
+    result: Dict[str, Any] = {"scrape": _model_to_dict(scrape_obj)}
+
+    if include_analysis:
+        try:
+            # run the sync LLM call off the event loop so FastAPI stays snappy
+            analysis = await asyncio.to_thread(chan_analysis, result["scrape"])
+            result["analysis"] = analysis
+        except Exception as e:
+            logger.exception("chan_analysis failed")
+            result["analysis_error"] = str(e)
+
+    return result
+
 # ---------------------------
 # Local dev entry (optional)
 # ---------------------------
