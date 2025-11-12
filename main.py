@@ -445,7 +445,7 @@ async def _fetch(client: httpx.AsyncClient, url: str) -> str:
 # FastAPI app
 # ---------------------------
 
-app = FastAPI(title="Telegram Scraper", version="1.1.0")
+app = FastAPI(title="Telegram Scraper", version="1.2.0")
 
 @app.get("/", tags=["health"])
 async def root():
@@ -453,15 +453,14 @@ async def root():
 
 @app.get(
     "/scrape",
-    response_model=Dict[str, Any],
-    response_model_exclude_none=False,   # keep keys even if None
+    # Remove response_model restriction so the handler can return any schema
+    response_model=None,
     tags=["scrape"],
 )
 async def scrape_channel(
     username: str = Query(..., pattern=r"^[A-Za-z0-9_\.]+$", description="Telegram channel username"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description="Max posts to return"),
     before: Optional[str] = Query(None, description="Fetch older messages before numeric post id"),
-    include_analysis: bool = Query(False, description="Also run LLM analysis"),
 ):
     # Validate username explicitly to give a cleaner error than 500
     if not USERNAME_RE.match(username):
@@ -564,16 +563,18 @@ async def scrape_channel(
 
     result: Dict[str, Any] = {"scrape": _model_to_dict(scrape_obj)}
 
-    if include_analysis:
-        try:
-            # run the sync LLM call off the event loop so FastAPI stays snappy
-            analysis = await asyncio.to_thread(chan_analysis, result["scrape"])
-            if isinstance(analysis, dict):
-                result.update(analysis)
-        except Exception as e:
-            logger.exception("chan_analysis failed")
-            result["analysis_error"] = str(e)
-    
+    # Always run GPT analysis (removed include_analysis flag)
+    try:
+        analysis = await asyncio.to_thread(chan_analysis, result["scrape"])  # off the event loop
+        if isinstance(analysis, dict):
+            result.update(analysis)
+        else:
+            result["analysis_raw"] = analysis
+    except Exception as e:
+        logger.exception("chan_analysis failed")
+        result["analysis_error"] = str(e)
+
+    # Remove heavy posts array from both top-level and nested scrape
     result.pop("posts", None)
     scr = result.get("scrape")
     if isinstance(scr, dict):
