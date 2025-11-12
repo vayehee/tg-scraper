@@ -551,6 +551,19 @@ async def scrape_channel(
 
         chan_avg_reactions_post = _avg_reactions_per_post(posts)
 
+        ScrapeResultObj = ScrapeResult(
+            chan_img=chan_img,
+            chan_username=username,
+            chan_name=chan_name,
+            chan_description=chan_description,
+            chan_subscribers=chan_subscribers,
+            chan_lang=chan_lang,
+            chan_avg_posts_day=chan_avg_posts_day,
+            chan_avg_reactions_post=chan_avg_reactions_post,
+            posts=posts,
+        )
+        
+        '''
         return ScrapeResult(
             chan_img=chan_img,
             chan_username=username,
@@ -562,6 +575,9 @@ async def scrape_channel(
             chan_avg_reactions_post=chan_avg_reactions_post,
             posts=posts,
         )
+        '''
+    
+    return chan_analysis(ScrapeResultObj, prompt="Analyze the Telegram channel data and provide a summary.")
 
 # ---------------------------
 # Local dev entry (optional)
