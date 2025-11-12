@@ -563,16 +563,12 @@ async def scrape_channel(
 
     result: Dict[str, Any] = _model_to_dict(scrape_obj)
 
-    # Always run GPT analysis (removed include_analysis flag)
-    try:
-        analysis = await asyncio.to_thread(chan_analysis, result)  # off the event loop
-        if isinstance(analysis, dict):
-            result.update(analysis)
-        else:
-            result["analysis_raw"] = analysis
-    except Exception as e:
-        logger.exception("chan_analysis failed")
-        result["analysis_error"] = str(e)
+    analysis = await asyncio.to_thread(chan_analysis, result)
+
+    if isinstance(analysis, dict):
+        result.update(analysis)
+    else:
+        result["analysis_raw"] = analysis
 
     # Remove heavy posts array from both top-level and nested scrape
     result.pop("posts", None)
