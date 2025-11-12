@@ -1,5 +1,4 @@
 # gpt.py
-# Centralized OpenAI (ChatGPT) integration for tg-scraper
 from __future__ import annotations
 
 import os
