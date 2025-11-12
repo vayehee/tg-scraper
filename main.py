@@ -575,6 +575,9 @@ async def scrape_channel(
             result["analysis_error"] = str(e)
     
     result.pop("posts", None)
+    scr = result.get("scrape")
+    if isinstance(scr, dict):
+        scr.pop("posts", None)
 
     return result
 
