@@ -568,10 +568,12 @@ async def scrape_channel(
         try:
             # run the sync LLM call off the event loop so FastAPI stays snappy
             analysis = await asyncio.to_thread(chan_analysis, result["scrape"])
-            result["analysis"] = analysis
+            result = {analysis.get(k, k): v for k, v in result.items()}
         except Exception as e:
             logger.exception("chan_analysis failed")
             result["analysis_error"] = str(e)
+    
+    result = result.pop("posts", None)
 
     return result
 

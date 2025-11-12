@@ -120,7 +120,7 @@ def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
         "Rules:\n"
         f"- Allowed topics (choose EXACTLY one; if none fits, use \"Unknown\"): \n{topics_block}\n"
         "- chan_focus must be ≤3 words (e.g., \"crypto hacks\", \"local city news\").\n"
-        "- chan_geotarget: infer the audience location from content (country preferred; else region/city). Use null if unclear.\n"
+        "- chan_geotarget: infer the location of the channel subscribers audience location from chan_lang, chan_name and chan_description . Use null if unclear.\n"
         "- If evidence is weak, be conservative and use \"Unknown\" or null.\n"
         "- DO NOT add extra keys. DO NOT add comments. DO NOT add markdown.\n\n"
         "Channel header:\n"
