@@ -37,6 +37,7 @@ TOPIC_CHOICES = [
     "Gaming",
     "Health",
     "Culture",
+    "Gore",
     "Unknown",
 ]
 
@@ -127,6 +128,7 @@ def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
         '   3. if the channel language has a clear national anchor (e.g., Hebrew→Israel, Russian→Russia, etc.),\n'
         '   use that national anchor as chan_geotarget, UNLESS there is strong explicit evidence'
         '   of a different target audience.\n'
+        '   4. if the channel language is English, unless explicitly indicated otherwise, chan_geotarget is International.'
         '- Prefer audience location over topic geography (e.g., if a Hebrew channel covers Lebanon,'
         'chan_geotarget should still be "Israel" unless it clearly targets another country.\n'
         '- If evidence is weak, use \"Unknown\" or null.\n'
