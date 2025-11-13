@@ -113,9 +113,9 @@ def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
         "You are a strict JSON classifier. OUTPUT ONLY JSON. No prose, no code fences, no commentary.\n"
         "Schema:\n"
         "{\n"
-        '  "chan_topic": "<ONE of the allowed topics, exact match>",\n'
-        '  "chan_focus": "<3 words or fewer>",\n'
-        '  "chan_geotarget": "<English place name or null>"\n"
+        "   chan_topic": "<ONE of the allowed topics, exact match>,\n"
+        "   chan_focus": "<3 words or fewer>,\n"
+        "   chan_geotarget": "<English place name or null>,\n"
         "}\n\n"
         "Rules:\n"
         f"- Allowed topics (choose EXACTLY one; if none fits, use \"Unknown\"): \n{topics_block}\n"
