@@ -115,7 +115,7 @@ def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
         '{\n'
         '   "chan_topic": "<ONE of the allowed topics, exact match>",\n'
         '   "chan_focus": "<3 words or fewer>",\n'
-        '   "chan_geotarget": "<English place name or null>",\n',
+        '   "chan_geotarget": "<English place name or null>",\n'
         '}\n\n'
         'Rules:\n'
         f'- Allowed topics (choose EXACTLY one; if none fits, use "Unknown"): \n{topics_block}\n'
@@ -134,7 +134,7 @@ def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
         'Channel header:\n'
         f'{head}\n\n'
         'Channel language:\n'
-        f'{head.get('chan_lang')}\n\n'
+        f'{head.get("chan_lang")}\n\n'
         'Sample of recent posts:\n'
         f'{pruned}\n\n'
         'Return ONLY the JSON object described above.'
