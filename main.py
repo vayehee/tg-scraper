@@ -532,19 +532,32 @@ async def scrape_channel(
                 next_before = _find_next_before_id(soup)
                 url = f"{start_url}?before={next_before}" if next_before else None
 
-    # --- Detect channel language from the first 5 posts with text ---
-    votes: Dict[str, int] = defaultdict(int)
-    conf_sum: Dict[str, float] = defaultdict(float)
+    # --- Detect channel language: prefer description, else fall back to posts ---
+    chan_lang: Optional[str] = None
 
-    sample_texts = [p.post_text for p in posts if p.post_text]
-    for text in sample_texts[:5]:
-        code, conf = detect_language(text[:2000])  # cap length to keep it cheap/fast
+    desc_for_lang = (chan_description or "").strip()
+    if len(desc_for_lang) > 3:
+        # 1) If channel description exists and is longer than 3 chars,
+        #    detect language ONLY from the description.
+        code, conf = detect_language(desc_for_lang[:2000])  # cap length for safety
         if code:
-            votes[code] += 1
-            conf_sum[code] += conf
+            chan_lang = normalize_lang(code)
+        else:
+            chan_lang = "und"
+    else:
+        # 2) Otherwise, detect language from the first 5 posts with text (current logic).
+        votes: Dict[str, int] = defaultdict(int)
+        conf_sum: Dict[str, float] = defaultdict(float)
 
-    chan_lang = majority_language(votes, conf_sum) or "und"  # ensure a value
-    chan_lang = normalize_lang(chan_lang)
+        sample_texts = [p.post_text for p in posts if p.post_text]
+        for text in sample_texts[:5]:
+            code, conf = detect_language(text[:2000])
+            if code:
+                votes[code] += 1
+                conf_sum[code] += conf
+
+        raw_lang = majority_language(votes, conf_sum) or "und"
+        chan_lang = normalize_lang(raw_lang)
 
     chan_avg_posts_day = _avg_posts_per_day(posts)
     chan_avg_reactions_post = _avg_reactions_per_post(posts)
