@@ -110,33 +110,34 @@ def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
     topics_block = "\n".join(f"- {t}" for t in TOPIC_CHOICES)
 
     return (
-        "You are a strict JSON classifier. OUTPUT ONLY JSON. No prose, no code fences, no commentary.\n"
-        "Schema:\n"
-        "{\n"
-        "   chan_topic": "<ONE of the allowed topics, exact match>,\n"
-        "   chan_focus": "<3 words or fewer>,\n"
-        "   chan_geotarget": "<English place name or null>,\n"
-        "}\n\n"
-        "Rules:\n"
-        f"- Allowed topics (choose EXACTLY one; if none fits, use \"Unknown\"): \n{topics_block}\n"
-        "- chan_focus must be ≤3 words.\n"
-        "- chan_geotarget = the LIKELY AUDIENCE location, not the subject of coverage.\n"
-        "- Use strong signals in this priority order:\n"
-        "  (1) explicit self-location of the channel/community,\n"
-        "  (2) consistent phone formats/currencies/holidays/demonyms in header and posts.\n"
-        "- (3) if the channel language has a clear national anchor (e.g., Hebrew→Israel), "
-        "use that as chan_geotarget **unless** there is strong, explicit evidence of a different audience.\n"
-        "- Prefer audience location over topic geography. If a Hebrew channel covers Lebanon, "
-        "chan_geotarget should still be \"Israel\" unless it clearly targets another country.\n"
-        "- If evidence is weak, use \"Unknown\" or null.\n"
-        "- DO NOT add extra keys; return exactly the schema.\n\n"
-        "Channel header:\n"
-        f"{head}\n\n"
-        "Channel language:\n"
-        f"{head.get('chan_lang')}\n\n"
-        "Sample of recent posts:\n"
-        f"{pruned}\n\n"
-        "Return ONLY the JSON object described above."
+        'You are a strict JSON classifier. OUTPUT ONLY JSON. No prose, no code fences, no commentary.\n'
+        'Schema:\n'
+        '{\n'
+        '   "chan_topic": "<ONE of the allowed topics, exact match>",\n'
+        '   "chan_focus": "<3 words or fewer>",\n'
+        '   "chan_geotarget": "<English place name or null>",\n',
+        '}\n\n'
+        'Rules:\n'
+        f'- Allowed topics (choose EXACTLY one; if none fits, use "Unknown"): \n{topics_block}\n'
+        '- chan_focus must be ≤3 words.\n'
+        '- chan_geotarget = the LIKELY AUDIENCE location, not the subject of coverage.\n'
+        '- Use strong signals in this priority order:\n'
+        '   1. explicit self-location of the channel/community,\n'
+        '   2. consistent phone formats/currencies/holidays/demonyms in header.\n'
+        '   3. if the channel language has a clear national anchor (e.g., Hebrew→Israel, Russian→Russia, etc.),\n'
+        '   use that national anchor as chan_geotarget, UNLESS there is strong explicit evidence'
+        '   of a different target audience.\n'
+        '- Prefer audience location over topic geography (e.g., if a Hebrew channel covers Lebanon,'
+        'chan_geotarget should still be "Israel" unless it clearly targets another country.\n'
+        '- If evidence is weak, use \"Unknown\" or null.\n'
+        '- DO NOT add extra keys; return exactly the schema.\n\n'
+        'Channel header:\n'
+        f'{head}\n\n'
+        'Channel language:\n'
+        f'{head.get('chan_lang')}\n\n'
+        'Sample of recent posts:\n'
+        f'{pruned}\n\n'
+        'Return ONLY the JSON object described above.'
     )
 
 def chan_analysis(
