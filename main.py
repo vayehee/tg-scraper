@@ -553,8 +553,9 @@ async def scrape_channel(
     # initialize chan_lang
     chan_lang: Optional[str] = None
 
-    if chan_name_lang[1] >= 0.9:
-        chan_lang = normalize_lang(chan_name_lang[0])
+    code, conf = detect_language(chan_name_str)
+    if code and conf >= 0.9:
+        chan_lang = normalize_lang(code)
 
 
 
@@ -612,7 +613,7 @@ async def scrape_channel(
     # Remove heavy posts array from both top-level and nested scrape
     result.pop("posts", None)
 
-    result["cnan_name_ext"] = str_analysis(result["chan_name"])
+    result["chan_name_ext"] = str_analysis(result["chan_name"])
 
     return result
 
