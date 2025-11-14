@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
     from google.cloud import translate  # type: ignore
 
 from gpt import chan_analysis
-from string import str_analysis
+from strings import str_analysis
 
 # ---------------------------
 # Logging
