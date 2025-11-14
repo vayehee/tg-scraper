@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover
     from google.cloud import translate  # type: ignore
 
 from gpt import chan_analysis
+from string import str_analysis
 
 # ---------------------------
 # Logging
@@ -70,13 +71,17 @@ def gcp_project_id() -> str:
 
 def detect_language(text: str) -> Tuple[Optional[str], float]:
     """Return (language_code, confidence). Safe on errors."""
+    # clean the text str input
     text = (text or "").strip()
+    # return None on empty text str input
     if not text:
         return None, 0.0
+    # make sure we know which GCP project to use
     project = gcp_project_id()
     if not project:
         logger.warning("detect_language skipped: GOOGLE_CLOUD_PROJECT not set")
         return None, 0.0
+    # call Google Cloud Translate detect_language
     try:
         client = get_translate_client()
         parent = f"projects/{project}/locations/{TRANSLATE_LOCATION}"
@@ -87,10 +92,13 @@ def detect_language(text: str) -> Tuple[Optional[str], float]:
                 "mime_type": "text/plain",
             }
         )
+        # return None if no languages detected
         if not resp.languages:
             return None, 0.0
+        # pick the best language by confidence from the response
         best = max(resp.languages, key=lambda l: getattr(l, "confidence", 0.0))
         return best.language_code, float(getattr(best, "confidence", 0.0))
+    
     except Exception as e:  # keep service resilient
         logger.warning("detect_language failed: %s", e)
         return None, 0.0
@@ -533,13 +541,31 @@ async def scrape_channel(
                 url = f"{start_url}?before={next_before}" if next_before else None
 
     # --- Detect channel language: prefer description, else fall back to posts ---
+    
+    # prep channel name
+    chan_name_str = (chan_name or "").strip()
+    chan_name_lang, chan_name_ = detect_language(chan_name_str)
+    
+    # prep channel description
+    chan_desc_str = (chan_description or "").strip()
+    chan_desc_lang = detect_language(chan_desc_str)
+
+    # initialize chan_lang
     chan_lang: Optional[str] = None
 
-    desc_for_lang = (chan_description or "").strip()
-    if len(desc_for_lang) > 3:
+    if chan_name_lang[1] >= 0.9:
+        chan_lang = normalize_lang(chan_name_lang[0])
+
+
+
+    # language detection logic
+    if len(chan_name_str) > 3:
+        code, conf = detect_language(chan_name_str[:2000])
+
+    if len(chan_desc_str) > 3:
         # 1) If channel description exists and is longer than 3 chars,
         #    detect language ONLY from the description.
-        code, conf = detect_language(desc_for_lang[:2000])  # cap length for safety
+        code, conf = detect_language(chan_desc_str[:2000])  # cap length for safety
         if code:
             chan_lang = normalize_lang(code)
         else:
@@ -585,6 +611,8 @@ async def scrape_channel(
 
     # Remove heavy posts array from both top-level and nested scrape
     result.pop("posts", None)
+
+    result["cnan_name_ext"] = str_analysis(result["chan_name"])
 
     return result
 
