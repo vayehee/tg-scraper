@@ -42,16 +42,16 @@ logger.info("tg-scraper starting; ready to listen")
 
 TELEGRAM_BASE = "https://t.me"
 CHANNEL_PATH = "/s/{username}"
-DEFAULT_LIMIT = 300          # max posts to return per call
-MAX_LIMIT = 500
-REQUEST_TIMEOUT = 30.0
+POSTS_LIMIT = 300          # max posts to return per call
+REQUEST_TIMEOUT = 20.0
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
 
 # Username validation: letters/digits/_ and dot.
-USERNAME_RE = re.compile(r"^[A-Za-z0-9_\.]+$")
+USERNAME_REGEX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
+
 
 # Views / counts like "26.8K", "1.2M", "12 345" etc.
 _KNUM_RE = re.compile(r'(\d[\d,.\u202f\u00A0]*)([KkMm]?)$')  # include thin/nbsp spaces
@@ -332,16 +332,18 @@ def _message_text(msg: Tag) -> str:
     return ""
 
 def _parse_channel_header(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
-    """Derive channel title/description/followers from header when present."""
+    """Derive channel title/description/subscribers from header when present."""
     info: Dict[str, Optional[str]] = {}
     title_el = soup.select_one('.tgme_channel_info_header_title, .tgme_channel_info_header_title span')
     if title_el:
         info['name'] = title_el.get_text(strip=True)
 
+    # channel description
     desc_el = soup.select_one('.tgme_channel_info_description')
     if desc_el:
         info['description'] = desc_el.get_text(separator="\n", strip=True)
 
+    # channel subscribers
     for sel in [
         '.tgme_channel_info_counter .counter_value',
         '.tgme_channel_info_counter_value',
@@ -349,10 +351,46 @@ def _parse_channel_header(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
     ]:
         c = soup.select_one(sel)
         if c:
-            followers = _parse_knum(c.get_text(strip=True))
-            if followers:
-                info['followers'] = followers
+            subscribers = _parse_knum(c.get_text(strip=True))
+            if subscribers:
+                info['subscribers'] = subscribers
                 break
+
+    # channel OpenGraph image
+    og_img = soup.find("meta", attrs={"property": "og:image"})
+    if og_img and og_img.get("content"):
+        img_og = og_img["content"]
+
+    # channel older rel image_source
+    link_img = soup.find("link", attrs={"rel": "image_src"})
+    if link_img and link_img.get("href"):
+        img_link = _abs_url(link_img["href"])
+
+    # channel header photo fallbacks (Telegram’s HTML varies by layout/AB tests)
+    candidates = [
+        ".tgme_channel_info_header_photo img",
+        ".tgme_page .tgme_page_photo img",
+        "img.tgme_page_photo_image",
+        ".tgme_channel_info .tgme_page_photo_image img",
+    ]
+    for sel in candidates:
+        el = soup.select_one(sel)
+        if not el:
+            continue
+        # Prefer srcset (highest res) if present
+        if el.has_attr("srcset"):
+            parts = [p.strip().split(" ")[0] for p in el["srcset"].split(",") if p.strip()]
+            if parts:
+                img_fallback = _abs_url(parts[-1])
+        if el.has_attr("src") and el["src"]:
+            img_fallback = _abs_url(el["src"])
+
+    # select best available image
+    for img in (img_og, img_link, img_fallback):
+        if img:
+            info["img"] = img
+            break
+
     return info
 
 def _extract_messages(soup: BeautifulSoup) -> List[Tag]:
@@ -466,13 +504,15 @@ async def root():
     tags=["scrape"],
 )
 async def scrape_channel(
-    username: str = Query(..., pattern=r"^[A-Za-z0-9_\.]+$", description="Telegram channel username"),
-    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description="Max posts to return"),
-    before: Optional[str] = Query(None, description="Fetch older messages before numeric post id"),
+    username: str = Query(
+        ..., 
+        pattern=USERNAME_REGEX.pattern, 
+        description="Telegram channel username"
+    ),
 ):
     # Validate username explicitly to give a cleaner error than 500
-    if not USERNAME_RE.match(username):
-        raise HTTPException(status_code=422, detail="Invalid username format.")
+    if not USERNAME_REGEX.match(username):
+        return "Invalid channel username."
 
     params = {}
     if before:
@@ -493,16 +533,16 @@ async def scrape_channel(
             url = url + "?" + "&".join([f"{k}={v}" for k, v in params.items()])
 
         # Iterate pages until we fill 'limit' or no more pages
-        while len(posts) < limit and url:
+        while len(posts) < POSTS_LIMIT and url:
             html_text = await _fetch(client, url)
             soup = BeautifulSoup(html_text, "lxml")
 
             # Capture channel info on first page
             if chan_name is None:
-                hdr = _parse_channel_header(soup)
-                chan_name = hdr.get("name")
-                chan_description = hdr.get("description")
-                chan_subscribers = hdr.get("followers")
+                header = _parse_channel_header(soup)
+                chan_name = header.get("name")
+                chan_description = header.get("description")
+                chan_subscribers = header.get("subscribers")
                 chan_img = _parse_channel_image(soup)
 
             # Parse messages
