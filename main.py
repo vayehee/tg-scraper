@@ -524,8 +524,6 @@ async def scrape_channel(
         chan_img = None
 
         url = start_url
-        if params:
-            url = url + "?" + "&".join([f"{k}={v}" for k, v in params.items()])
 
         # Iterate pages until we fill 'limit' or no more pages
         while len(posts) < POSTS_LIMIT and url:
