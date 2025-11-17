@@ -503,6 +503,7 @@ async def root():
     response_model=None,
     tags=["scrape"],
 )
+
 async def scrape_channel(
     username: str = Query(
         ..., 
@@ -513,12 +514,6 @@ async def scrape_channel(
     # Validate username explicitly to give a cleaner error than 500
     if not USERNAME_REGEX.match(username):
         return "Invalid channel username."
-
-    params = {}
-    if before:
-        if not before.isdigit():
-            raise HTTPException(status_code=422, detail="'before' must be a numeric post id.")
-        params["before"] = before
 
     start_url = TELEGRAM_BASE + CHANNEL_PATH.format(username=username)
     async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -551,7 +546,7 @@ async def scrape_channel(
                 break
 
             for msg in msg_nodes:
-                if len(posts) >= limit:
+                if len(posts) >= POSTS_LIMIT:
                     break
 
                 # Skip service/system messages
@@ -576,7 +571,7 @@ async def scrape_channel(
                 )
 
             # Prepare next page
-            if len(posts) < limit:
+            if len(posts) < POSTS_LIMIT:
                 next_before = _find_next_before_id(soup)
                 url = f"{start_url}?before={next_before}" if next_before else None
 
