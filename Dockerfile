@@ -20,7 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # App code
 COPY main.py .
 COPY gpt.py .
+COPY gtranslate.py .
 COPY strings.py .
+COPY helper.py .
 
 # Cloud Run port
 ENV PORT=8080

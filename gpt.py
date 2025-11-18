@@ -1,26 +1,35 @@
 # gpt.py
 from __future__ import annotations
 
-import os
-import time
 import json
-import re
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from openai import OpenAI
-from openai import APIError, RateLimitError, APITimeoutError
+client = OpenAI()
 
+import logging
 logger = logging.getLogger("tg-scraper.gpt")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "400"))
-RETRY_MAX = int(os.getenv("OPENAI_RETRY_MAX", "3"))
-RETRY_BASE_DELAY = float(os.getenv("OPENAI_RETRY_BASE_DELAY", "0.6"))
 
-_client: Optional[OpenAI] = None
+# ---------------------------
+# Config
+# ---------------------------
+OPENAI_MODEL = {
+    "4o": "gpt-4o",        # flagship omni model (general-purpose, multimodal)
+    "4om": "gpt-4o-mini",  # fast, cheap omni variant for high-volume tasks
+    "4o1": "gpt-4.1",      # strong GPT-4 family model for general use
+    "4o1m": "gpt-4.1-mini",# lighter/cheaper 4.1 variant
+    "5o1": "gpt-5.1",      # latest high-intelligence model for complex tasks
+    "5o1m": "gpt-5.1-mini",# smaller 5.1, good balance of cost and quality
+    "o3": "o3",            # strongest reasoning model for deep step-by-step tasks
+    "o4m": "o4-mini",      # lightweight reasoning model, cheaper & faster than o3
+}
 
-TOPIC_CHOICES = [
+
+# ---------------------------
+# Utilities
+# ---------------------------
+CATEGORIES = [
     "News",
     "Politics",
     "Business",
@@ -32,6 +41,7 @@ TOPIC_CHOICES = [
     "Education",
     "OSINT",
     "NSFW",
+    "Porn",
     "Memes",
     "Deals",
     "Gaming",
@@ -41,148 +51,202 @@ TOPIC_CHOICES = [
     "Unknown",
 ]
 
-def get_openai_client() -> OpenAI:
-    """Lazily initialize the OpenAI client (uses OPENAI_API_KEY env var)."""
-    global _client
-    if _client is None:
-        _client = OpenAI()
-    return _client
 
-def _retryable_call(fn, *args, **kwargs):
-    """Minimal retry wrapper for 429/5xx/timeouts with exponential backoff."""
-    delay = RETRY_BASE_DELAY
-    for attempt in range(1, RETRY_MAX + 1):
-        try:
-            return fn(*args, **kwargs)
-        except (RateLimitError, APITimeoutError) as e:
-            logger.warning("OpenAI transient error (attempt %s/%s): %s", attempt, RETRY_MAX, e)
-        except APIError as e:
-            code = getattr(e, "status_code", 500)
-            if 500 <= code < 600:
-                logger.warning("OpenAI 5xx (attempt %s/%s): %s", attempt, RETRY_MAX, e)
-            else:
-                raise
-        time.sleep(delay)
-        delay *= 2
-    return fn(*args, **kwargs)
+# ---------------------------
+# Methods
+# ---------------------------
 
-def _to_dict(obj: Any) -> Dict[str, Any]:
-    """Normalize Pydantic model or dict-like into a plain dict."""
-    if hasattr(obj, "model_dump") and callable(obj.model_dump):
-        return obj.model_dump()
-    if hasattr(obj, "dict") and callable(obj.dict):
-        return obj.dict()
-    if isinstance(obj, dict):
-        return obj
-    return {"_raw": str(obj)}
+# ask ChatGPT to analyze a Telegram channel JSON and extract insights
+def CHANANALYSE(chan_json: str) -> Dict[str, Any]:
 
-def _trim_text(s: Optional[str], limit: int) -> str:
-    s = (s or "").strip().replace("\r", " ")
-    return (s[:limit] + "…") if len(s) > limit else s
-
-def _make_chan_json_prompt(scrape: Dict[str, Any]) -> str:
-    """
-    Build an instruction-heavy prompt that forces a JSON-only reply.
-    Uses global TOPIC_CHOICES for allowed 'chan_topic' values.
-    """
-    head = {
-        "chan_username": scrape.get("chan_username"),
-        "chan_name": scrape.get("chan_name"),
-        "chan_description": (scrape.get("chan_description") or "")[:800],
-        "chan_subscribers": scrape.get("chan_subscribers"),
-        "chan_lang": scrape.get("chan_lang"),
-        "chan_avg_posts_day": scrape.get("chan_avg_posts_day"),
-        "chan_avg_reactions_post": scrape.get("chan_avg_reactions_post"),
+    resp_schema = {
+        "name": "text_analysis",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "name_en": {
+                    "type": "string",
+                    "description": (
+                        'Rewrite the channel name from "chan_name" into clear, natural English. '
+                        "Preserve the meaning, avoid added interpretation, and keep it concise."
+                    ),
+                },
+                "desc_en": {
+                    "type": "string",
+                    "description": (
+                        'Rewrite "chan_description" in English as a single short sentence. '
+                        "MUST NOT exceed 90 characters (including spaces). No hashtags or emojis."
+                    ),
+                },
+                "category": {
+                    "type": "string",
+                    "description": (
+                        "Analyze ALL fields in the user-provided JSON and return ONE channel category. "
+                        f"The value MUST be exactly one of the following options: {CATEGORIES}. "
+                        "Choose the single best match only."
+                    ),
+                },
+                "locations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Return an array of strings. Each element is the name of a GEOGRAPHICAL LOCATION "
+                        "(cities, regions, countries, places) explicitly or implicitly mentioned anywhere "
+                        "in the JSON. Use English names where possible. No duplicates, no explanations."
+                    ),
+                },
+                "names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Return an array of strings. Each element is a PERSON name or ENTITY name "
+                        "(people, organizations, companies, parties, media outlets, groups, etc.) "
+                        "appearing anywhere in the JSON. No duplicates, no extra commentary."
+                    ),
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Based on all values in the JSON, compile an array of strings. Each element is an ABSTRACT NOUN or ADJECTIVE which "
+                        "describes the channel's topical focus (e.g. \"politics\", \"finance\", \"satirical\", \"propaganda\"). "
+                        "OMIT promissory, sensational, hype or clickbait terms."
+                    ),
+                },
+                "keywords": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Return an array of up to 3 strings. Each element is an INFERRED abstract noun or "
+                        "adjective that does NOT appear in the JSON text but logically follows from the "
+                        "content and focus of the channel. NO promissory, sensational, hype or clickbait words."
+                    ),
+                },
+                "target": {
+                    "type": "string",
+                    "description": (
+                        "Based ONLY on EXPLICIT clues and the LANGUAGE of the JSON fields, return exactly ONE "
+                        "country name in English that the channel most likely targets as its audience (e.g. 'France', 'Turkey'). "
+                        'If JSON key values are in English and no EXPLICIT clues on target audience present, choose "International". '
+                        'If JSON key values are NOT in English and no EXPLICIT clues on target audience present, choose the single most likely country.'
+                    ),
+                },
+            },
+            "required": [
+                "name_en",
+                "desc_en",
+                "category",
+                "locations",
+                "names",
+                "topics",
+                "keywords",
+                "target",
+            ],
+            "additionalProperties": False,
+        },
     }
 
-    posts = scrape.get("posts") or []
-    pruned = []
-    max_posts = 80   # keep analysis affordable but informative
-    max_text = 400   # snippet per post
-    for p in posts[:max_posts]:
-        pruned.append({
-            "post_timestamp": p.get("post_timestamp"),
-            "post_text": (p.get("post_text") or "")[:max_text],
-            "post_reactions_count": p.get("post_reactions_count"),
-            "post_views_count": p.get("post_views_count"),
-            "post_comments": p.get("post_comments"),
-        })
-
-    topics_block = "\n".join(f"- {t}" for t in TOPIC_CHOICES)
-
-    return (
-        'You are a strict JSON classifier. OUTPUT ONLY JSON. No prose, no code fences, no commentary.\n'
-        'Schema:\n'
-        '{\n'
-        '   "chan_topic": "<ONE of the allowed topics, exact match>",\n'
-        '   "chan_focus": "<3 words or fewer>",\n'
-        '   "chan_geotarget": "<English place name or null>",\n'
-        '}\n\n'
-        'Rules:\n'
-        f'- Allowed topics (choose EXACTLY one; if none fits, use "Unknown"): \n{topics_block}\n'
-        '- chan_focus must be ≤3 words.\n'
-        '- chan_geotarget = the LIKELY AUDIENCE location, not the subject of coverage.\n'
-        '- Use strong signals in this priority order:\n'
-        '   1. explicit self-location of the channel/community,\n'
-        '   2. consistent phone formats/currencies/holidays/demonyms in header.\n'
-        '   3. if the channel language has a clear national anchor (e.g., Hebrew→Israel, Russian→Russia, etc.),\n'
-        '   use that national anchor as chan_geotarget, UNLESS there is strong explicit evidence'
-        '   of a different target audience.\n'
-        '   4. if the channel language is English, unless explicitly indicated otherwise, chan_geotarget is International.'
-        '- Prefer audience location over topic geography (e.g., if a Hebrew channel covers Lebanon,'
-        'chan_geotarget should still be "Israel" unless it clearly targets another country.\n'
-        '- If evidence is weak, use \"Unknown\" or null.\n'
-        '- DO NOT add extra keys; return exactly the schema.\n\n'
-        'Channel header:\n'
-        f'{head}\n\n'
-        'Channel language:\n'
-        f'{head.get("chan_lang")}\n\n'
-        'Sample of recent posts:\n'
-        f'{pruned}\n\n'
-        'Return ONLY the JSON object described above.'
+    ask_gpt = client.chat.completions.create(
+        model=OPENAI_MODEL["4o"],
+        temperature=0,
+        response_format={
+            "type": "json_schema",
+            "json_schema": resp_schema,
+        },
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert Telegram channels inspector. "
+                    "Following is a JSON object containing scraped info from a specific Telegram channel, "
+                    "in the following schema:\n"
+                    "{\n"
+                    '   "chan_username": "<string>",\n'
+                    '   "chan_name": "<string>",\n'
+                    '   "chan_description": "<string>",\n'
+                    "}\n"
+                    "Analyze the user-provided JSON containing info on a specific Telegram channel and "
+                    "extract meaningful insights. You must respond ONLY with JSON that matches the provided schema."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Telegram Channel Info JSON:\n\n{chan_json}",
+            },
+        ],
     )
 
-def chan_analysis(
-    scrape: Dict[str, Any],
-    model: str = OPENAI_MODEL,
-) -> Dict[str, Any]:
-    """
-    Classify a channel into:
-      - chan_topic (one of TOPIC_CHOICES or 'Unknown')
-      - chan_focus (<= 3 words)
-      - chan_geotarget (English place name or null)
-    """
-    # Ensure we always have a plain dict
-    scrape = _to_dict(scrape)
-
-    system_msg = (
-        "You are a careful analyst. Follow the user's schema exactly. "
-        "If information is insufficient, use 'Unknown' or null. "
-        "Never output anything but JSON."
-    )
-    user_prompt = _make_chan_json_prompt(scrape)
-
-    client = get_openai_client()
+    raw = ask_gpt.choices[0].message.content
 
     try:
-        # If your model supports JSON mode, uncomment the response_format:
-        resp = _retryable_call(
-            client.chat.completions.create,
-            model=model,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.1,
-            max_tokens=MAX_OUTPUT_TOKENS,
-            # response_format={"type": "json_object"},
-        )
-        text = resp.choices[0].message.content.strip()
-        try:
-            return json.loads(text)
-        except Exception:
-            cleaned = text.strip().strip("`")
-            cleaned = re.sub(r"^json\n", "", cleaned, flags=re.I)
-            return json.loads(cleaned)
-    except Exception as e:
-        raise RuntimeError(f"chan_analysis failed: {e}") from e
+        resp = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse CHANANALYSE JSON: %r", raw)
+        resp = {"error": f"Failed to parse CHANANALYSE JSON: {raw!r}"}
+
+    return resp
+
+
+# ask ChatGPT to rewrite a string to a given length in a given language
+def REWRITE(string: str, length: int, lang: Optional[str] = None) -> Dict[str, Any]:
+
+    # if output "lang" is None, default to English
+    if lang is None:
+        lang = "English"
+
+    # define response schema (prompt)
+    resp_schema = {
+        "name": "text_rewrite",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "rewrite": {
+                    "type": "string",
+                    "description": (
+                        f"Rewrite the user-provided text in {lang}. Maximum length: {length} characters. "
+                        "If rewrite needs multiple paragraphs, use short paragraphs separated by empty lines."
+                    ),
+                },
+            },
+            "required": ["rewrite"],
+            "additionalProperties": False,
+        },
+    }
+    
+    # ask GPT to process the prompt and reply according to schema
+    ask_gpt = client.chat.completions.create(
+        model=OPENAI_MODEL["4om"],  # gpt-4o-mini is safest for json_schema in chat.completions
+        temperature=0,
+        response_format={
+            "type": "json_schema",
+            "json_schema": resp_schema,
+        },
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert writer. "
+                    f"Rewrite user-provided text in {lang}, with a maximum of {length} characters. "
+                    "Use short paragraphs separated by empty lines. "
+                    "You must respond ONLY with JSON that matches the provided schema."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Text to rewrite:\n\n{string}",
+            },
+        ],
+    )
+
+    raw = ask_gpt.choices[0].message.content
+
+    try:
+        resp = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        # Optionally log the raw output for debugging
+        logger.warning("Failed to parse REWRITE JSON: %r", raw)
+        resp = {"rewrite": f"Failed to parse REWRITE JSON: {raw!r}"}
+
+    return resp

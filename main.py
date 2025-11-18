@@ -16,18 +16,16 @@ from datetime import datetime
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-# google-cloud-translate v3 client import (works whether installed as translate_v3 or translate)
-try:
-    from google.cloud import translate_v3 as translate
-except ImportError:  # pragma: no cover
-    from google.cloud import translate  # type: ignore
+import helpers
+import gpt
+import gtranslate
 
-from gpt import chan_analysis
 from strings import str_analysis
+
+
 
 # ---------------------------
 # Logging
@@ -36,72 +34,38 @@ logger = logging.getLogger("tg-scraper")
 logging.basicConfig(level=logging.INFO)
 logger.info("tg-scraper starting; ready to listen")
 
+
 # ---------------------------
 # Config
 # ---------------------------
-
+GCP_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
+TRANSLATE_CLIENT: translate.TranslationServiceClient = translate.TranslationServiceClient()
 TELEGRAM_BASE = "https://t.me"
 CHANNEL_PATH = "/s/{username}"
 POSTS_LIMIT = 300          # max posts to return per call
 REQUEST_TIMEOUT = 20.0
-UA = (
+USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
-
-# Username validation: letters/digits/_ and dot.
-USERNAME_REGEX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
-
-
-# Views / counts like "26.8K", "1.2M", "12 345" etc.
-_KNUM_RE = re.compile(r'(\d[\d,.\u202f\u00A0]*)([KkMm]?)$')  # include thin/nbsp spaces
-
 # Translate config
 TRANSLATE_LOCATION = os.getenv("TRANSLATE_LOCATION", "global")
 _translate_client: Optional["translate.TranslationServiceClient"] = None
 
-def get_translate_client() -> "translate.TranslationServiceClient":
-    global _translate_client
-    if _translate_client is None:
-        _translate_client = translate.TranslationServiceClient()
-    return _translate_client
 
-def gcp_project_id() -> str:
-    return os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT") or ""
+# ---------------------------
+# Utilities
+# ---------------------------
 
-def detect_language(text: str) -> Tuple[Optional[str], float]:
-    """Return (language_code, confidence). Safe on errors."""
-    # clean the text str input
-    text = (text or "").strip()
-    # return None on empty text str input
-    if not text:
-        return None, 0.0
-    # make sure we know which GCP project to use
-    project = gcp_project_id()
-    if not project:
-        logger.warning("detect_language skipped: GOOGLE_CLOUD_PROJECT not set")
-        return None, 0.0
-    # call Google Cloud Translate detect_language
-    try:
-        client = get_translate_client()
-        parent = f"projects/{project}/locations/{TRANSLATE_LOCATION}"
-        resp = client.detect_language(
-            request={
-                "parent": parent,
-                "content": text,
-                "mime_type": "text/plain",
-            }
-        )
-        # return None if no languages detected
-        if not resp.languages:
-            return None, 0.0
-        # pick the best language by confidence from the response
-        best = max(resp.languages, key=lambda l: getattr(l, "confidence", 0.0))
-        return best.language_code, float(getattr(best, "confidence", 0.0))
-    
-    except Exception as e:  # keep service resilient
-        logger.warning("detect_language failed: %s", e)
-        return None, 0.0
+# Valid Telegram channel username regex
+USERNAME_REGEX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
+# Views / counts like "26.8K", "1.2M", "12 345" etc.
+KNUM_RE = re.compile(r'(\d[\d,.\u202f\u00A0]*)([KkMm]?)$')  # include thin/nbsp spaces
+
+
+
+
+
 
 def majority_language(votes: Dict[str, int], conf_sum: Dict[str, float]) -> Optional[str]:
     """Pick language with most votes; break ties by higher total confidence."""
@@ -138,24 +102,7 @@ class ScrapeResult(BaseModel):
     chan_avg_reactions_post: Optional[int] = None
     posts: List[Post]
 
-# ---------------------------
-# Utilities
-# ---------------------------
 
-_LEGACY_LANG_MAP = {
-    "iw": "he",  # Hebrew
-    "ji": "yi",  # Yiddish
-    "in": "id",  # Indonesian
-}
-
-def normalize_lang(code: Optional[str]) -> Optional[str]:
-    if not code:
-        return None
-    code = code.strip().lower()
-    return _LEGACY_LANG_MAP.get(code, code)
-
-def _strip_ws(s: Optional[str]) -> str:
-    return (s or "").strip()
 
 def _unescape(s: Optional[str]) -> str:
     return html.unescape(s or "")
@@ -165,7 +112,7 @@ def _parse_knum(text: Optional[str]) -> int:
     if not text:
         return 0
     text = text.replace("\u202f", "").replace("\u00A0", "").replace(" ", "")
-    m = _KNUM_RE.search(text)
+    m = KNUM_RE.search(text)
     if not m:
         digits = re.sub(r'\D', '', text)
         return int(digits) if digits else 0
@@ -478,7 +425,7 @@ async def _fetch(client: httpx.AsyncClient, url: str) -> str:
     r = await client.get(
         url,
         headers={
-            "User-Agent": UA,
+            "User-Agent": USER_AGENT,
             "Accept-Language": "en-US,en;q=0.9,he;q=0.8",
             "Cache-Control": "no-cache",
         },
@@ -514,6 +461,10 @@ async def scrape_channel(
     # Validate username explicitly to give a cleaner error than 500
     if not USERNAME_REGEX.match(username):
         return "Invalid channel username."
+    
+    return username
+
+    '''
 
     start_url = TELEGRAM_BASE + CHANNEL_PATH.format(username=username)
     async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -577,16 +528,16 @@ async def scrape_channel(
     
     # prep channel name
     chan_name_str = (chan_name or "").strip()
-    chan_name_lang, chan_name_ = detect_language(chan_name_str)
+    chan_name_lang, chan_name_ = gtranslate.DETECT(chan_name_str) # OLD: chan_name_lang, chan_name_ = detect_language(chan_name_str)
     
     # prep channel description
     chan_desc_str = (chan_description or "").strip()
-    chan_desc_lang = detect_language(chan_desc_str)
+    chan_desc_lang = gtranslate.DETECT(chan_desc_str) # OLD: chan_desc_lang = detect_language(chan_desc_str)
 
     # initialize chan_lang
     chan_lang: Optional[str] = None
 
-    code, conf = detect_language(chan_name_str)
+    code, conf = gtranslate.DETECT(chan_name_str) # OLD: detect_language(chan_name_str)
     if code and conf >= 0.9:
         chan_lang = normalize_lang(code)
 
@@ -594,12 +545,12 @@ async def scrape_channel(
 
     # language detection logic
     if len(chan_name_str) > 3:
-        code, conf = detect_language(chan_name_str[:2000])
+        code, conf = gtranslate.DETECT(chan_name_str) # OLD: detect_language(chan_name_str[:2000])
 
     if len(chan_desc_str) > 3:
         # 1) If channel description exists and is longer than 3 chars,
         #    detect language ONLY from the description.
-        code, conf = detect_language(chan_desc_str[:2000])  # cap length for safety
+        code, conf = gtranslate.DETECT(chan_desc_str) # OLD: detect_language(chan_desc_str[:2000])  # cap length for safety
         if code:
             chan_lang = normalize_lang(code)
         else:
@@ -611,7 +562,7 @@ async def scrape_channel(
 
         sample_texts = [p.post_text for p in posts if p.post_text]
         for text in sample_texts[:5]:
-            code, conf = detect_language(text[:2000])
+            code, conf = gtranslate.DETECT(text[:2000]) # OLD: detect_language(text[:2000])
             if code:
                 votes[code] += 1
                 conf_sum[code] += conf
@@ -649,6 +600,8 @@ async def scrape_channel(
     result["chan_name_ext"] = str_analysis(result["chan_name"])
 
     return result
+
+    '''
 
 # ---------------------------
 # Local dev entry (optional)
