@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # App code
 COPY main.py .
-COPY scrpae.py .
+COPY scrape.py .
 COPY gpt.py .
 COPY gtranslate.py .
 # COPY strings.py .
