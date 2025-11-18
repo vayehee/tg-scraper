@@ -15,11 +15,9 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-import helper
+# import helper
 import gpt
 import gtranslate
-
-from strings import str_analysis
 
 
 
