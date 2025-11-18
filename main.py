@@ -5,7 +5,7 @@ import re
 import logging
 from fastapi import FastAPI, Query, HTTPException
 
-from scrape
+import scrape
 import gpt
 import gtranslate
 
