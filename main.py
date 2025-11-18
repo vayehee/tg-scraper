@@ -8,6 +8,7 @@ import asyncio
 from typing import List, Optional, Dict, Any, Tuple
 from collections import defaultdict
 from datetime import datetime
+from fastapi import FastAPI, Query
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -33,8 +34,6 @@ logger.info("tg-scraper starting; ready to listen")
 # ---------------------------
 # Config
 # ---------------------------
-GCP_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
-TRANSLATE_CLIENT: translate.TranslationServiceClient = translate.TranslationServiceClient()
 TELEGRAM_BASE = "https://t.me"
 CHANNEL_PATH = "/s/{username}"
 POSTS_LIMIT = 300          # max posts to return per call
@@ -43,10 +42,6 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
-# Translate config
-TRANSLATE_LOCATION = os.getenv("TRANSLATE_LOCATION", "global")
-_translate_client: Optional["translate.TranslationServiceClient"] = None
-
 
 # ---------------------------
 # Utilities
