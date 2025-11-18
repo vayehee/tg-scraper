@@ -5,7 +5,7 @@ import re
 import logging
 from fastapi import FastAPI, Query, HTTPException
 
-import scrape  # scrape.py with async def CHANNEL(...)
+import scrape
 import gpt
 import gtranslate
 
@@ -36,11 +36,7 @@ async def root():
 
 @app.get("/chan", response_model=None, tags=["chan"])
 async def chan(
-    username: str = Query(
-        ...,
-        alias="chan",  # <<< public name ?chan=..., internal var 'username'
-        description="Telegram channel username",
-    ),
+    username: str = Query(..., description="Telegram channel username"),
 ):
     # 1. Validate username
     if not USERNAME_REGEX.match(username):
