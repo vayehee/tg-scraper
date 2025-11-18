@@ -5,7 +5,7 @@ import re
 import logging
 from fastapi import FastAPI, Query, HTTPException
 
-import scrape
+import scrape  # scrape.py with async def CHANNEL(...)
 import gpt
 import gtranslate
 
@@ -20,7 +20,6 @@ logger.info("tg-scraper starting; ready to listen")
 # Config / utilities
 # ---------------------------
 
-# Valid Telegram channel username regex
 USERNAME_REGEX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
 
 # ---------------------------
@@ -29,13 +28,19 @@ USERNAME_REGEX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
 
 app = FastAPI(title="Telegram Scraper", version="1.2.0")
 
+
 @app.get("/", tags=["health"])
 async def root():
     return {"status": "ok", "service": "tg-scraper"}
 
+
 @app.get("/chan", response_model=None, tags=["chan"])
 async def chan(
-    username: str = Query(..., description="Telegram channel username"),
+    username: str = Query(
+        ...,
+        alias="chan",  # <<< public name ?chan=..., internal var 'username'
+        description="Telegram channel username",
+    ),
 ):
     # 1. Validate username
     if not USERNAME_REGEX.match(username):
@@ -44,6 +49,7 @@ async def chan(
     # 2. Scrape channel meta
     channel = await scrape.CHANNEL(username)
     return channel
+
 
 # ---------------------------
 # Local dev entry (optional)
