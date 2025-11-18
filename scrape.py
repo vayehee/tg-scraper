@@ -46,7 +46,6 @@ class ChannelMeta(BaseModel):
     chan_subscribers: Optional[int] = None
     chan_avg_posts_per_day: Optional[int] = None
     chan_avg_views_per_post: Optional[int] = None
-    chan_avg_comments_per_post: Optional[int] = None
     chan_avg_reactions_per_post: Optional[int] = None
 
 
@@ -55,7 +54,6 @@ class ChannelPosts(BaseModel):
     post_text: Optional[str] = Field(None, description="Visible text content")
     post_reactions_count: int = Field(0, description="Sum of all reaction types")
     post_views_count: Optional[int] = Field(None, description="Views shown on post, if present")
-    post_comments_count: Optional[int] = Field(None, description="Number of comments on the post")
 
 
 # ---------------------------
@@ -283,44 +281,6 @@ def _parse_post_timestamp(msg: Tag) -> Optional[str]:
     return None
 
 
-# Extract the number of comments associated with a message.
-def _parse_post_comment_count(msg: Tag) -> Optional[int]:
-    """
-    Extract the number of comments for a message.
-    Handles classic layouts, inline buttons, and the new replies-element footer.
-    """
-    # 1) Classic selector
-    a = msg.select_one("a.tgme_widget_message_comments")
-    if a:
-        cnt = _parse_knum(a.get_text(strip=True))
-        return cnt if cnt > 0 else 0
-
-    # 2) Inline buttons that include a comments link
-    for cand in msg.select(".tgme_widget_message_inline_buttons a"):
-        href = cand.get("href", "")
-        if "comments" in href:
-            cnt = _parse_knum(cand.get_text(strip=True))
-            return cnt if cnt > 0 else 0
-
-    # 3) Bottom meta area variants sometimes hold comment link
-    a = msg.select_one(".tgme_widget_message_bottom a.tgme_widget_message_comments")
-    if a:
-        cnt = _parse_knum(a.get_text(strip=True))
-        return cnt if cnt > 0 else 0
-
-    # 4) New replies footer used in some Telegram layouts:
-    #    <replies-element> ... <span class="replies-footer-text"><span class="i18n">2 Comments</span></span>
-    replies = (
-        msg.select_one("replies-element .replies-footer-text .i18n")
-        or msg.select_one("replies-element .replies-footer-text")
-    )
-    if replies:
-        cnt = _parse_knum(replies.get_text(strip=True))
-        return cnt if cnt > 0 else 0
-
-    return None
-
-
 # Extract visible post text content from a message bubble.
 def _parse_post_text(msg: Tag) -> str:
     """Extract visible text content of the post (without footer/meta)."""
@@ -373,29 +333,6 @@ def _calc_avg_views_per_post(posts: List[ChannelPosts]) -> Optional[int]:
     for p in posts:
         try:
             total += int(p.post_views_count or 0)
-            n += 1
-        except Exception:
-            continue
-
-    if n == 0:
-        return None
-
-    return int(round(total / n))
-
-
-# Compute average comments per post across all posts.
-def _calc_avg_comments_per_post(posts: List[ChannelPosts]) -> Optional[int]:
-    """Return rounded average of post_comments_count across all posts."""
-    if not posts:
-        return None
-
-    total = 0
-    n = 0
-    for p in posts:
-        try:
-            if p.post_comments_count is None:
-                continue  # skip posts where we have no comment data
-            total += int(p.post_comments_count)
             n += 1
         except Exception:
             continue
@@ -498,7 +435,6 @@ async def _scrape_chan(username: str) -> Tuple[ChannelMeta, List[ChannelPosts]]:
                 views = _parse_post_views(msg)
                 reactions = _parse_post_reactions(msg)
                 total_reacts = reactions["total"]
-                comments = _parse_post_comment_count(msg)
 
                 posts.append(
                     ChannelPosts(
@@ -506,7 +442,6 @@ async def _scrape_chan(username: str) -> Tuple[ChannelMeta, List[ChannelPosts]]:
                         post_text=txt or None,
                         post_reactions_count=total_reacts,
                         post_views_count=views,
-                        post_comments_count=comments,
                     )
                 )
 
@@ -524,7 +459,6 @@ async def _scrape_chan(username: str) -> Tuple[ChannelMeta, List[ChannelPosts]]:
         chan_subscribers=chan_subscribers,
         chan_avg_posts_per_day=None,
         chan_avg_views_per_post=None,
-        chan_avg_comments_per_post=None,
         chan_avg_reactions_per_post=None,
     )
 
@@ -543,7 +477,6 @@ async def CHANNEL(username: str) -> Dict[str, Any]:
 
     chan_avg_posts_per_day = _calc_avg_posts_per_day(posts)
     chan_avg_views_per_post = _calc_avg_views_per_post(posts)
-    chan_avg_comments_per_post = _calc_avg_comments_per_post(posts)
     chan_avg_reactions_per_post = _calc_avg_reactions_per_post(posts)
 
     meta = ChannelMeta(
@@ -554,9 +487,7 @@ async def CHANNEL(username: str) -> Dict[str, Any]:
         chan_subscribers=base_meta.chan_subscribers,
         chan_avg_posts_per_day=chan_avg_posts_per_day,
         chan_avg_views_per_post=chan_avg_views_per_post,
-        chan_avg_comments_per_post=chan_avg_comments_per_post,
         chan_avg_reactions_per_post=chan_avg_reactions_per_post,
     )
 
     return meta.model_dump()
-
