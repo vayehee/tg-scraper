@@ -82,11 +82,8 @@ def CHANANALYSE(chan_json: str) -> Dict[str, Any]:
                 },
                 "category": {
                     "type": "string",
-                    "description": (
-                        "Analyze ALL fields in the user-provided JSON and return ONE channel category. "
-                        f"The value MUST be exactly one of the following options: {CATEGORIES}. "
-                        "Choose the single best match only."
-                    ),
+                    "enum": CATEGORIES,
+                    "description": "Channel category. Must be exactly one of the enum values."
                 },
                 "locations": {
                     "type": "array",

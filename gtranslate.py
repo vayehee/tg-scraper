@@ -6,8 +6,10 @@ from typing import Optional, Tuple, Dict
 
 try:
     from google.cloud import translate_v3 as translate
-except ImportError:  # pragma: no cover
-    from google.cloud import translate
+    TRANSLATE_CLIENT = translate.TranslationServiceClient()
+except ImportError:  # v3 not available, fallback to v2
+    from google.cloud import translate_v2 as translate
+    TRANSLATE_CLIENT = translate.Client()
 
 logger = logging.getLogger("tg-scraper.gtranslate")
 
@@ -16,7 +18,6 @@ logger = logging.getLogger("tg-scraper.gtranslate")
 # ---------------------------
 PROJECT_ID = os.getenv("PROJECT_ID")
 TRANSLATE_LOCATION = os.getenv("TRANSLATE_LOCATION", "global")
-TRANSLATE_CLIENT: translate.TranslationServiceClient = translate.TranslationServiceClient()
 
 
 # ---------------------------
@@ -75,7 +76,7 @@ def DETECT(text: str) -> Tuple[Optional[str], float]:
         code = LEGACY_LANG_MAP.get(code, code)
 
         # 4.4. Return the best detected language code and its certitude
-        return best.language_code, float(getattr(best, "confidence", 0.0))
+        return code, float(getattr(best, "confidence", 0.0))
     
     # 5. Handle errors & exceptions gracefully
     except Exception as e:  # keep service resilient
