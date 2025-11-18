@@ -287,7 +287,7 @@ def _parse_post_timestamp(msg: Tag) -> Optional[str]:
 def _parse_post_comment_count(msg: Tag) -> Optional[int]:
     """
     Extract the number of comments for a message.
-    Handles both classic and new inline-button layouts.
+    Handles classic layouts, inline buttons, and the new replies-element footer.
     """
     # 1) Classic selector
     a = msg.select_one("a.tgme_widget_message_comments")
@@ -306,6 +306,16 @@ def _parse_post_comment_count(msg: Tag) -> Optional[int]:
     a = msg.select_one(".tgme_widget_message_bottom a.tgme_widget_message_comments")
     if a:
         cnt = _parse_knum(a.get_text(strip=True))
+        return cnt if cnt > 0 else 0
+
+    # 4) New replies footer used in some Telegram layouts:
+    #    <replies-element> ... <span class="replies-footer-text"><span class="i18n">2 Comments</span></span>
+    replies = (
+        msg.select_one("replies-element .replies-footer-text .i18n")
+        or msg.select_one("replies-element .replies-footer-text")
+    )
+    if replies:
+        cnt = _parse_knum(replies.get_text(strip=True))
         return cnt if cnt > 0 else 0
 
     return None
@@ -383,7 +393,9 @@ def _calc_avg_comments_per_post(posts: List[ChannelPosts]) -> Optional[int]:
     n = 0
     for p in posts:
         try:
-            total += int(p.post_comments_count or 0)
+            if p.post_comments_count is None:
+                continue  # skip posts where we have no comment data
+            total += int(p.post_comments_count)
             n += 1
         except Exception:
             continue
