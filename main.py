@@ -1,9 +1,4 @@
 # main.py
-# FastAPI Telegram channel scraper (public web pages only)
-# - Scrapes https://t.me/s/<username>
-# - Robustly parses message text, views, timestamps, and reactions (all types)
-# - Works with both classic and new Telegram reaction layouts
-# - Designed for Cloud Run: listens on PORT (default 8080)
 
 import os
 import re

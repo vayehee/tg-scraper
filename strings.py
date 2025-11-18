@@ -1,15 +1,4 @@
 # string.py
-"""
-Utility module for:
-- GPT-based linguistic string analysis
-- Google Translate-based translation & language detection
-- Selecting the best translation between Google and GPT
-
-Environment variables expected:
-- OPENAI_API_KEY               (for OpenAI)
-- TRANSLATE_PROJECT_ID or GOOGLE_CLOUD_PROJECT  (for Google Cloud Translate)
-- GOOGLE_APPLICATION_CREDENTIALS (or default ADC set up in Cloud Run)
-"""
 
 import os
 import json
