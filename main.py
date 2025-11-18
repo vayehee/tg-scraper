@@ -8,7 +8,8 @@ import asyncio
 from typing import List, Optional, Dict, Any, Tuple
 from collections import defaultdict
 from datetime import datetime
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
+
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -432,22 +433,28 @@ app = FastAPI(title="Telegram Scraper", version="1.2.0")
 async def root():
     return {"status": "ok", "service": "tg-scraper"}
 
-@app.get(
-    "/scrape",
-    # Remove response_model restriction so the handler can return any schema
-    response_model=None,
-    tags=["scrape"],
-)
-async def scrape_channel(
-    username: str = Query(
-        ...,
-        pattern=USERNAME_REGEX.pattern,
-        description="Telegram channel username",
-    ),
+@app.get("/scrape", response_model=None, tags=["scrape"])
+
+async def validate_username(
+    username: str = Query(..., description="Telegram channel username"),
 ):
-    # Validate username explicitly to give a cleaner error than 500
     if not USERNAME_REGEX.match(username):
-        return "Invalid channel username."
+        raise HTTPException(status_code=400, detail="Invalid channel username.")
+    return username
+
+
+
+    return username
+
+# ---------------------------
+# Local dev entry (optional)
+# ---------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", "8080"))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+
 
 
     '''
@@ -587,14 +594,3 @@ async def scrape_channel(
     return result
 
     '''
-
-    return username
-
-# ---------------------------
-# Local dev entry (optional)
-# ---------------------------
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", "8080"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
