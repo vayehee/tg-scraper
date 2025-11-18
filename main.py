@@ -34,15 +34,22 @@ async def root():
     return {"status": "ok", "service": "tg-scraper"}
 
 
-@app.get("/chan", response_model=None, tags=["chan"])
-async def chan(
-    username: str = Query(..., description="Telegram channel username"),
+@app.get("/", response_model=None, tags=["chan"])
+async def root(
+    chan: Optional[str] = Query(
+        None,
+        description="Telegram channel username (Telegram @username without @)",
+    ),
 ):
-    # 1. Validate username
+    # 1. if no channel provided, return health check
+    if chan is None:
+        return {"status": "ok", "service": "tg-scraper"}
+    
+    # 2. Validate username
     if not USERNAME_REGEX.match(username):
         raise HTTPException(status_code=400, detail="Invalid channel username.")
 
-    # 2. Scrape channel meta
+    # 3. Scrape channel meta
     channel = await scrape.CHANNEL(username)
     return channel
 
