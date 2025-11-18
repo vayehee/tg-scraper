@@ -440,22 +440,19 @@ async def root():
     response_model=None,
     tags=["scrape"],
 )
-
 async def scrape_channel(
     username: str = Query(
-        ..., 
-        pattern=USERNAME_REGEX.pattern, 
-        description="Telegram channel username"
+        ...,
+        pattern=USERNAME_REGEX.pattern,
+        description="Telegram channel username",
     ),
 ):
     # Validate username explicitly to give a cleaner error than 500
     if not USERNAME_REGEX.match(username):
         return "Invalid channel username."
-    
-    return username
+
 
     '''
-
     start_url = TELEGRAM_BASE + CHANNEL_PATH.format(username=username)
     async with httpx.AsyncClient(follow_redirects=True) as client:
         posts: List[Post] = []
@@ -592,6 +589,8 @@ async def scrape_channel(
     return result
 
     '''
+
+    return username
 
 # ---------------------------
 # Local dev entry (optional)
