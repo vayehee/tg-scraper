@@ -3,6 +3,8 @@
 import os
 import re
 import logging
+from typing import Optional
+
 from fastapi import FastAPI, Query, HTTPException
 
 import scrape
@@ -29,28 +31,23 @@ USERNAME_REGEX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
 app = FastAPI(title="Telegram Scraper", version="1.2.0")
 
 
-@app.get("/", tags=["health"])
-async def root():
-    return {"status": "ok", "service": "tg-scraper"}
-
-
-@app.get("/", response_model=None, tags=["chan"])
+@app.get("/", response_model=None, tags=["health", "chan"])
 async def root(
     chan: Optional[str] = Query(
         None,
         description="Telegram channel username (Telegram @username without @)",
     ),
 ):
-    # 1. if no channel provided, return health check
+    # 1. If no channel provided, return health check
     if chan is None:
         return {"status": "ok", "service": "tg-scraper"}
-    
+
     # 2. Validate username
-    if not USERNAME_REGEX.match(username):
+    if not USERNAME_REGEX.match(chan):
         raise HTTPException(status_code=400, detail="Invalid channel username.")
 
-    # 3. Scrape channel meta
-    channel = await scrape.CHANNEL(username)
+    # 3. Scrape channel meta & aggregates
+    channel = await scrape.CHANNEL(chan)
     return channel
 
 
