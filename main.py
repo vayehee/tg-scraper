@@ -119,26 +119,23 @@ async def login_page() -> HTMLResponse:
 
 
 @app.post("/auth/telegram")
-async def telegram_auth(user: dict):
-    """
-    Receives Telegram Login Widget user object as JSON,
-    verifies it, and returns a simple success payload.
+async def telegram_auth(payload: dict, request: Request):
+    tg_user = payload.get("user") or {}
+    ga_ctx = payload.get("ga") or {}
 
-    This is where you'd normally create a session/JWT.
-    """
-    if not verify_telegram_auth(user):
+    if not verify_telegram_auth(tg_user):
         raise HTTPException(status_code=400, detail="Invalid Telegram login")
 
     public_user = {
-        "id": user.get("id"),
-        "username": user.get("username"),
-        "first_name": user.get("first_name"),
-        "last_name": user.get("last_name"),
-        "photo_url": user.get("photo_url"),
+        "id": tg_user.get("id"),
+        "username": tg_user.get("username"),
+        "first_name": tg_user.get("first_name"),
+        "last_name": tg_user.get("last_name"),
+        "photo_url": tg_user.get("photo_url"),
     }
 
-    # TODO: create session / JWT / Firestore record here
-    return JSONResponse({"ok": True, "user": public_user})
+    return JSONResponse({"ok": True, "user": public_user, "ga": ga_ctx})
+
 
 
 @app.post("/auth/logout")
