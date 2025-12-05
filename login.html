@@ -45,15 +45,41 @@
     .status.error {
       color: #f97373;
     }
+
+    /* Logout button – visually similar to Telegram button */
+    .tg-logout-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 16px;
+      border-radius: 9999px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 500;
+      background: #2aabee; /* TG-like blue */
+      color: #ffffff;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.25);
+      transition: transform 0.05s ease, box-shadow 0.05s ease, opacity 0.15s ease;
+    }
+    .tg-logout-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+      opacity: 0.95;
+    }
+    .tg-logout-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Login with Telegram</h1>
-    <p>Click the Telegram button below to sign in.</p>
+    <p id="subtitle">Click the Telegram button below to sign in.</p>
 
     <div id="tg-login-container">
-      <!-- Your Telegram widget snippet -->
+      <!-- Telegram widget snippet -->
       <script async
               src="https://telegram.org/js/telegram-widget.js?22"
               data-telegram-login="TeleChanSortBot"
@@ -77,17 +103,35 @@
       }
     }
 
-    function onTelegramAuth(user) {
-      // Optional: still show the classic alert from Telegram’s example
-      // (useful for quick manual testing)
-      // alert(
-      //   'Logged in as ' +
-      //   user.first_name + ' ' + (user.last_name || '') +
-      //   ' (' + user.id + (user.username ? ', @' + user.username : '') + ')'
-      // );
+    function applyLoggedInUI(username) {
+      var subtitle = document.getElementById("subtitle");
+      var container = document.getElementById("tg-login-container");
 
-      // Recommended: send to backend for verification / session handling
+      // Change the subtitle:
+      // <p>Logged in as @username</p>
+      subtitle.textContent = "Logged in as @" + username;
+
+      // Replace Telegram widget area with a "Log out" button
+      container.innerHTML = '<button id="logout-btn" class="tg-logout-btn">Log out</button>';
+
+      var logoutBtn = document.getElementById("logout-btn");
+      logoutBtn.addEventListener("click", function () {
+        setStatus("Logging out...");
+
+        // Call your backend logout endpoint if you have one
+        fetch("/auth/logout", {
+          method: "POST",
+          credentials: "include"
+        }).finally(function () {
+          // Simplest behaviour: reload page to go back to login state
+          window.location.reload();
+        });
+      });
+    }
+
+    function onTelegramAuth(user) {
       setStatus("Authenticating with server...");
+
       fetch("/auth/telegram", {
         method: "POST",
         headers: {
@@ -103,12 +147,11 @@
         return res.json();
       })
       .then(function (data) {
-        setStatus(
-          "Logged in as @" +
-          (data.user.username || data.user.id)
-        );
-        // Optional redirect into your app:
-        // window.location.href = "/";
+        var username = data.user.username || data.user.id;
+        setStatus("Logged in as @" + username);
+
+        // Update the card to the "logged in" version
+        applyLoggedInUI(username);
       })
       .catch(function (err) {
         console.error(err);
