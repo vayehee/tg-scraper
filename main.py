@@ -141,6 +141,26 @@ async def telegram_auth(user: dict):
     return JSONResponse({"ok": True, "user": public_user})
 
 
+@app.post("/auth/logout")
+async def logout():
+    """
+    Logs the user out from the app perspective.
+
+    Right now we don't persist any server-side session,
+    so this simply returns ok=True.
+
+    If you later switch to cookie-based or DB-backed
+    sessions, you can clear them here.
+    """
+    # Example for future cookie-based sessions:
+    # response = JSONResponse({"ok": True})
+    # response.delete_cookie("session")
+    # return response
+
+    return JSONResponse({"ok": True})
+
+
+
 # ---------------------------
 # Local dev entry (optional)
 # ---------------------------
