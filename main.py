@@ -136,12 +136,17 @@ async def telegram_auth(payload: dict, request: Request):
     if not verify_telegram_auth(tg_user):
         raise HTTPException(status_code=400, detail="Invalid Telegram login")
 
-    stored_user = user_db.create_or_update_user_from_telegram(
-        tg_payload=tg_user,
-        ga_ctx=ga_ctx,
-        user_agent=request.headers.get("user-agent"),
-        source="telegram_widget",
-    )
+    try:
+        stored_user = user_db.create_or_update_user_from_telegram(
+            tg_payload=tg_user,
+            ga_ctx=ga_ctx,
+            user_agent=request.headers.get("user-agent"),
+            source="telegram_widget",
+        )
+    except Exception as e:
+        logger.exception("Error while creating/updating user in Firestore")
+        # For debugging you can temporarily expose the message, then remove:
+        raise HTTPException(status_code=500, detail=f"Firestore error: {e}")
 
     public_user = {
         "id": stored_user.get("telegram_id"),
