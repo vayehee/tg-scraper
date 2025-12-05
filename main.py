@@ -16,6 +16,8 @@ from pathlib import Path
 import hmac
 import hashlib
 
+import user as user_db
+
 
 # ---------------------------
 # Logging
@@ -120,21 +122,41 @@ async def login_page() -> HTMLResponse:
 
 @app.post("/auth/telegram")
 async def telegram_auth(payload: dict, request: Request):
+    """
+    Expects JSON:
+      {
+        "user": { ...Telegram login payload... },
+        "ga":   { ...GA context... }
+      }
+    Verifies Telegram data, upserts user in Firestore, returns public user info.
+    """
     tg_user = payload.get("user") or {}
     ga_ctx = payload.get("ga") or {}
 
     if not verify_telegram_auth(tg_user):
         raise HTTPException(status_code=400, detail="Invalid Telegram login")
 
+    stored_user = user_db.create_or_update_user_from_telegram(
+        tg_payload=tg_user,
+        ga_ctx=ga_ctx,
+        user_agent=request.headers.get("user-agent"),
+        source="telegram_widget",
+    )
+
     public_user = {
-        "id": tg_user.get("id"),
-        "username": tg_user.get("username"),
-        "first_name": tg_user.get("first_name"),
-        "last_name": tg_user.get("last_name"),
-        "photo_url": tg_user.get("photo_url"),
+        "id": stored_user.get("telegram_id"),
+        "username": stored_user.get("username"),
+        "first_name": stored_user.get("first_name"),
+        "last_name": stored_user.get("last_name"),
+        "photo_url": stored_user.get("photo_url"),
+        "login_count": stored_user.get("login_count"),
+        "user_type": stored_user.get("user_type"),
+        "restricted": stored_user.get("restricted"),
+        "is_admin": stored_user.get("is_admin"),
     }
 
-    return JSONResponse({"ok": True, "user": public_user, "ga": ga_ctx})
+    return JSONResponse({"ok": True, "user": public_user})
+
 
 
 

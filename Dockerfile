@@ -22,6 +22,7 @@ COPY main.py .
 COPY scrape.py .
 COPY gpt.py .
 COPY gtranslate.py .
+COPY user.py .
 COPY login.html .
 # COPY strings.py .
 

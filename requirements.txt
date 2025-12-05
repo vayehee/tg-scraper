@@ -11,6 +11,4 @@ google-auth>=2.35
 google-cloud-core>=2.4
 grpcio>=1.64
 protobuf>=4.25,<6
-
-
-
+google-cloud-firestore
