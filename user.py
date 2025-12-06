@@ -31,8 +31,6 @@ USER_SCHEMA: Dict[str, Any] = {
     "created_at": None,         # ISO8601 str (UTC)
     "updated_at": None,         # ISO8601 str (UTC)
     "last_login_at": None,      # ISO8601 str (UTC)
-    "last_login_source": None,  # e.g. "telegram_widget"
-    "last_login_user_agent": None,
     "login_count": 0,           # int
 }
 
@@ -42,7 +40,6 @@ USER_SCHEMA: Dict[str, Any] = {
 
 _PROJECT_ID = os.getenv("FIRESTORE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
 _db: Optional[firestore.Client] = None
-
 
 def get_db() -> firestore.Client:
     global _db
@@ -55,10 +52,8 @@ def get_db() -> firestore.Client:
             _db = firestore.Client()
     return _db
 
-
 def users_col() -> firestore.CollectionReference:
     return get_db().collection("users")
-
 
 # -----------------------------------------------------------------------------
 # Internal helpers
@@ -67,7 +62,6 @@ def users_col() -> firestore.CollectionReference:
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-
 def apply_user_schema(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Ensure all USER_SCHEMA keys exist in the returned dict.
@@ -75,10 +69,8 @@ def apply_user_schema(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     full = USER_SCHEMA.copy()
     full.update({k: v for k, v in data.items() if k in USER_SCHEMA})
-    # ensure a fresh list, not the shared default
     full["admin_of"] = list(full.get("admin_of") or [])
     return full
-
 
 # -----------------------------------------------------------------------------
 # Public operations
@@ -90,19 +82,9 @@ def create_or_update_user_from_telegram(
     user_agent: Optional[str] = None,
     source: str = "telegram_widget",
 ) -> Dict[str, Any]:
-    """
-    Upsert a user document in Firestore based on Telegram Login payload.
-
-    - Uses Telegram user id as Firestore document id.
-    - On first login: creates a new doc with login_count=1.
-    - On subsequent logins: updates profile, bumps login_count and timestamps.
-
-    GA / geo / language context is now session-level and handled in session.py.
-    """
     if "id" not in tg_payload:
         raise ValueError("Telegram payload is missing 'id' field")
 
-    # kept for interface compatibility; not used at user level anymore
     ga_ctx = ga_ctx or {}
 
     doc_id = str(tg_payload["id"])
@@ -118,10 +100,7 @@ def create_or_update_user_from_telegram(
         "first_name": tg_payload.get("first_name"),
         "last_name": tg_payload.get("last_name"),
         "photo_url": tg_payload.get("photo_url"),
-
         "last_login_at": now,
-        "last_login_source": source,
-        "last_login_user_agent": user_agent,
     }
 
     if snap.exists:
@@ -141,7 +120,6 @@ def create_or_update_user_from_telegram(
         base_data["updated_at"] = now
         base_data["login_count"] = 1
 
-        # new users default flags (respect schema defaults)
         base_data.setdefault("user_type", USER_SCHEMA["user_type"])
         base_data.setdefault("customer_id", USER_SCHEMA["customer_id"])
         base_data.setdefault("restricted", USER_SCHEMA["restricted"])
@@ -153,7 +131,6 @@ def create_or_update_user_from_telegram(
         logger.info("Created new user %s", doc_id)
 
     return final
-
 
 def get_user_by_id(telegram_id: str) -> Optional[Dict[str, Any]]:
     doc = users_col().document(str(telegram_id)).get()
