@@ -2,7 +2,11 @@
 
 import os
 import re
+import hmac
+import hashlib
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Query, HTTPException, Request, Body
@@ -11,13 +15,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import scrape
 import gpt
 import gtranslate
-
-from pathlib import Path
-import hmac
-import hashlib
-
 import user as user_db
-import session as session_db  # <-- new import for session handling
+import session as session_db
 
 
 # ---------------------------
@@ -37,6 +36,12 @@ EXT_LOGIN_HTML_PATH = BASE_DIR / "ext_login.html"
 
 TELEGRAM_BOT_NAME = os.getenv("TELEGRAM_BOT_NAME", "YOUR_BOT_NAME_HERE")  # without @
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # required for verification
+
+WEB_SESSION_COOKIE = "telechan_web_session"
+EXT_SESSION_COOKIE = "telechan_ext_session"
+
+WEB_SESSION_TTL_HOURS = 24 * 7   # ~7 days for web app
+EXT_SESSION_TTL_HOURS = 24       # 24h for extension
 
 USERNAME_REGEX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
 
@@ -130,8 +135,8 @@ async def telegram_auth(payload: dict, request: Request):
         "user": { ...Telegram login payload... },
         "ga":   { ...GA context... }
       }
-    Verifies Telegram data, upserts user in Firestore,
-    creates a web session, and returns public user info + web_session_key.
+    Verifies Telegram data, upserts user in Firestore, creates a web session,
+    sets a cookie, and returns public user info + web_session_key.
     """
     tg_user = payload.get("user") or {}
     ga_ctx = payload.get("ga") or {}
@@ -146,24 +151,24 @@ async def telegram_auth(payload: dict, request: Request):
             user_agent=request.headers.get("user-agent"),
             source="telegram_widget",
         )
-
-        # Enrich GA context with backend-seen IP for session
-        client_ip = request.client.host if request.client else None
-        if client_ip:
-            ga_ctx = dict(ga_ctx)  # shallow copy
-            ga_ctx.setdefault("ip", client_ip)
-
-        # Create a session for the web app
-        web_session_key = session_db.create_session_for_user(
-            telegram_id=stored_user.get("telegram_id"),
-            ttl_hours=24,
-            source="web_app",  # stored in front_end field
-            user_agent=request.headers.get("user-agent"),
-            ga_ctx=ga_ctx,
-        )
     except Exception as e:
-        logger.exception("Error while creating/updating user or session in Firestore")
+        logger.exception("Error while creating/updating user in Firestore")
         raise HTTPException(status_code=500, detail=f"Firestore error: {e}")
+
+    # Create a web_app session for this user
+    web_session = session_db.create_session_for_user(
+        telegram_id=stored_user.get("telegram_id"),
+        source="web_app",
+        user_agent=request.headers.get("user-agent"),
+        ga_ctx=ga_ctx,
+        ttl_hours=WEB_SESSION_TTL_HOURS,
+    )
+
+    expires_at = web_session.get("expires_at")
+    if isinstance(expires_at, datetime):
+        expires_at_str = expires_at.isoformat()
+    else:
+        expires_at_str = str(expires_at) if expires_at else None
 
     public_user = {
         "id": stored_user.get("telegram_id"),
@@ -177,66 +182,26 @@ async def telegram_auth(payload: dict, request: Request):
         "is_admin": stored_user.get("is_admin"),
     }
 
-    return JSONResponse(
-        {
-            "ok": True,
-            "user": public_user,
-            "web_session_key": web_session_key,
-        }
+    body = {
+        "ok": True,
+        "user": public_user,
+        "web_session_key": web_session["session_key"],
+        "session": {
+            "session_key": web_session["session_key"],
+            "expires_at": expires_at_str,
+        },
+    }
+
+    response = JSONResponse(body)
+    response.set_cookie(
+        WEB_SESSION_COOKIE,
+        web_session["session_key"],
+        max_age=WEB_SESSION_TTL_HOURS * 3600,
+        httponly=True,
+        secure=True,
+        samesite="Lax",
     )
-
-
-@app.post("/auth/session/ext")
-async def create_ext_session(payload: dict, request: Request):
-    """
-    Called from login.html when user clicks "Get Session Key".
-
-    Expects:
-      {
-        "web_session_key": "...",
-        "ga": { ... optional GA context ... }
-      }
-
-    Uses the web session to verify the user, then creates a new
-    extension pairing session (front_end=None initially), and
-    returns that session_key.
-    """
-    web_session_key = (payload or {}).get("web_session_key")
-    ga_ctx = (payload or {}).get("ga") or {}
-
-    if not web_session_key:
-        raise HTTPException(status_code=400, detail="web_session_key is required")
-
-    web_session = session_db.resolve_session_key(web_session_key)
-    if not web_session:
-        raise HTTPException(
-            status_code=401,
-            detail="Web session invalid or expired. Please log in again.",
-        )
-
-    telegram_id = web_session.get("telegram_id")
-    if not telegram_id:
-        raise HTTPException(status_code=500, detail="Web session missing telegram_id")
-
-    # Add IP from backend for this new session
-    client_ip = request.client.host if request.client else None
-    if client_ip:
-        ga_ctx = dict(ga_ctx)
-        ga_ctx.setdefault("ip", client_ip)
-
-    try:
-        ext_session_key = session_db.create_session_for_user(
-            telegram_id=telegram_id,
-            ttl_hours=24,
-            source=None,  # pairing session; will become "extension" when used
-            user_agent=request.headers.get("user-agent"),
-            ga_ctx=ga_ctx,
-        )
-    except Exception as e:
-        logger.exception("Error while creating extension session")
-        raise HTTPException(status_code=500, detail=f"Firestore error: {e}")
-
-    return JSONResponse({"ok": True, "session_key": ext_session_key})
+    return response
 
 
 @app.post("/auth/logout")
@@ -245,12 +210,19 @@ async def logout(payload: Optional[dict] = Body(default=None)):
     Logs the user out from the app perspective.
 
     If a session_key is provided, invalidate that session.
+    Always clears both web and extension cookies.
     """
     session_key = (payload or {}).get("session_key")
     if session_key:
-        session_db.invalidate_session(session_key, reason="logout")
+        try:
+            session_db.invalidate_session(session_key, reason="logout")
+        except Exception:
+            logger.exception("Failed to invalidate session_key %s", session_key)
 
-    return JSONResponse({"ok": True})
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(WEB_SESSION_COOKIE)
+    response.delete_cookie(EXT_SESSION_COOKIE)
+    return response
 
 
 # ---------------------------
@@ -278,7 +250,10 @@ async def ext_login_page() -> HTMLResponse:
 async def ext_session_auth(payload: dict, request: Request):
     """
     Validates a session_key created from the web app and
-    marks it as used by the extension.
+    marks it as used by the extension. Sets a 24h cookie.
+
+    Expects JSON:
+      { "session_key": "...", "ga": { ... }? }
     """
     session_key = (payload or {}).get("session_key")
     if not session_key:
@@ -299,13 +274,11 @@ async def ext_session_auth(payload: dict, request: Request):
     # mark as extension session
     session_db.mark_session_used_by_extension(session_key)
 
-    # prepare expiry as ISO string for JSON
     expires_at = session.get("expires_at")
-    expires_at_str = None
     if isinstance(expires_at, datetime):
         expires_at_str = expires_at.isoformat()
-    elif isinstance(expires_at, str):
-        expires_at_str = expires_at
+    else:
+        expires_at_str = str(expires_at) if expires_at else None
 
     public_user = {
         "id": user.get("telegram_id"),
@@ -324,8 +297,16 @@ async def ext_session_auth(payload: dict, request: Request):
         "expires_at": expires_at_str,
     }
 
-    return JSONResponse({"ok": True, "user": public_user, "session": session_info})
-
+    response = JSONResponse({"ok": True, "user": public_user, "session": session_info})
+    response.set_cookie(
+        EXT_SESSION_COOKIE,
+        session_key,
+        max_age=EXT_SESSION_TTL_HOURS * 3600,
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+    )
+    return response
 
 
 # ---------------------------
@@ -374,6 +355,106 @@ async def telegram_auth_ext(payload: dict, request: Request):
     }
 
     return JSONResponse({"ok": True, "user": public_user})
+
+
+# ---------------------------
+# "Who am I" endpoints (web + extension)
+# ---------------------------
+
+@app.get("/auth/me")
+async def auth_me(request: Request):
+    session_key = request.cookies.get(WEB_SESSION_COOKIE)
+    if not session_key:
+        raise HTTPException(status_code=401, detail="No session cookie")
+
+    session = session_db.resolve_session_key(session_key)
+    if not session:
+        resp = JSONResponse({"ok": False, "detail": "Session invalid"})
+        resp.delete_cookie(WEB_SESSION_COOKIE)
+        resp.status_code = 401
+        return resp
+
+    user = user_db.get_user_by_id(session.get("telegram_id"))
+    if not user:
+        resp = JSONResponse({"ok": False, "detail": "User not found"})
+        resp.delete_cookie(WEB_SESSION_COOKIE)
+        resp.status_code = 401
+        return resp
+
+    expires_at = session.get("expires_at")
+    if isinstance(expires_at, datetime):
+        expires_at_str = expires_at.isoformat()
+    else:
+        expires_at_str = str(expires_at) if expires_at else None
+
+    public_user = {
+        "id": user.get("telegram_id"),
+        "username": user.get("username"),
+        "first_name": user.get("first_name"),
+        "last_name": user.get("last_name"),
+        "photo_url": user.get("photo_url"),
+        "login_count": user.get("login_count"),
+        "user_type": user.get("user_type"),
+        "restricted": user.get("restricted"),
+        "is_admin": user.get("is_admin"),
+    }
+
+    return JSONResponse({
+        "ok": True,
+        "user": public_user,
+        "session": {
+            "session_key": session_key,
+            "expires_at": expires_at_str,
+        },
+    })
+
+
+@app.get("/auth/ext/me")
+async def auth_ext_me(request: Request):
+    session_key = request.cookies.get(EXT_SESSION_COOKIE)
+    if not session_key:
+        raise HTTPException(status_code=401, detail="No extension session cookie")
+
+    session = session_db.resolve_session_key(session_key)
+    if not session:
+        resp = JSONResponse({"ok": False, "detail": "Session invalid"})
+        resp.delete_cookie(EXT_SESSION_COOKIE)
+        resp.status_code = 401
+        return resp
+
+    user = user_db.get_user_by_id(session.get("telegram_id"))
+    if not user:
+        resp = JSONResponse({"ok": False, "detail": "User not found"})
+        resp.delete_cookie(EXT_SESSION_COOKIE)
+        resp.status_code = 401
+        return resp
+
+    expires_at = session.get("expires_at")
+    if isinstance(expires_at, datetime):
+        expires_at_str = expires_at.isoformat()
+    else:
+        expires_at_str = str(expires_at) if expires_at else None
+
+    public_user = {
+        "id": user.get("telegram_id"),
+        "username": user.get("username"),
+        "first_name": user.get("first_name"),
+        "last_name": user.get("last_name"),
+        "photo_url": user.get("photo_url"),
+        "login_count": user.get("login_count"),
+        "user_type": user.get("user_type"),
+        "restricted": user.get("restricted"),
+        "is_admin": user.get("is_admin"),
+    }
+
+    return JSONResponse({
+        "ok": True,
+        "user": public_user,
+        "session": {
+            "session_key": session_key,
+            "expires_at": expires_at_str,
+        },
+    })
 
 
 # ---------------------------

@@ -37,8 +37,6 @@
                     console.warn('Could not get GA fields', e);
                 }
             }
-
-            window.addEventListener('load', initGAFields);
         </script>
 
         <style>
@@ -131,14 +129,14 @@
             <div id="session-key-wrapper" style="margin-top: 12px; display: none;">
                 <p style="margin: 0 0 8px; font-size: 0.85rem; color: #9ca3af;">Session key:</p>
                 <textarea id="session-key-textarea"
-                        readonly
-                        rows="3"
-                        style="width: 100%; font-size: 0.8rem; border-radius: 8px; padding: 6px; resize: none;"></textarea>
+                          readonly
+                          rows="3"
+                          style="width: 100%; font-size: 0.8rem; border-radius: 8px; padding: 6px; resize: none;"></textarea>
             </div>
         </div>
 
         <script type="text/javascript">
-            // Holds the web_app session key created on login
+            // Holds the web_app session key created on login (or restored from cookie via /auth/me)
             var webSessionKey = null;
 
             function setStatus(msg, isError) {
@@ -194,6 +192,7 @@
                             session_key: webSessionKey
                         })
                     }).finally(function () {
+                        // Cookie is cleared server-side; reload to reset UI state
                         window.location.reload();
                     });
                 });
@@ -268,7 +267,8 @@
                 })
                 .then(function (data) {
                     var username = data.user.username || data.user.id;
-                    webSessionKey = data.web_session_key || null;
+                    // web_session_key comes from backend and matches the cookie-backed session
+                    webSessionKey = (data.session && data.session.session_key) || data.web_session_key || null;
 
                     setStatus("Logged in as @" + username);
                     applyLoggedInUI(username);
@@ -278,6 +278,40 @@
                     setStatus("Login failed: " + err.message, true);
                 });
             }
+
+            function initFromExistingSession() {
+                // If there is a valid WEB_SESSION_COOKIE, /auth/me will return the user + session
+                fetch("/auth/me", {
+                    method: "GET",
+                    credentials: "include"
+                })
+                .then(function (res) {
+                    if (!res.ok) {
+                        throw new Error("No active web session");
+                    }
+                    return res.json();
+                })
+                .then(function (data) {
+                    if (!data || !data.user || !data.session) {
+                        throw new Error("Malformed /auth/me response");
+                    }
+
+                    var username = data.user.username || data.user.id;
+                    webSessionKey = data.session.session_key || null;
+
+                    setStatus("Logged in as @" + username);
+                    applyLoggedInUI(username);
+                })
+                .catch(function (err) {
+                    // Silent failure; user simply sees the Telegram login button
+                    console.log("[WEB] initFromExistingSession:", err.message);
+                });
+            }
+
+            window.addEventListener("load", function () {
+                initGAFields();
+                initFromExistingSession();
+            });
         </script>
 
     </body>

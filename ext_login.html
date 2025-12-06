@@ -37,8 +37,6 @@
                 console.warn('[EXT] Could not get GA fields', e);
             }
         }
-
-        window.addEventListener('load', initGAFields);
     </script>
 
     <style>
@@ -205,10 +203,10 @@
             var button = document.getElementById("ext-login-btn");
 
             if (wrapper) {
-                wrapper.style.display = "none";  // 1. hide input box
+                wrapper.style.display = "none";  // hide input box
             }
             if (button) {
-                button.textContent = "Logout";   // 2. button text
+                button.textContent = "Logout";   // change button text
             }
 
             var expiryText = formatExpiry(expiresAtIso);
@@ -302,6 +300,7 @@
 
                 updateUIToLoggedIn("@" + username, expiresAtIso);
 
+                // Notify Chrome extension popup (if opened from it)
                 try {
                     if (window.opener && !window.opener.closed) {
                         window.opener.postMessage({
@@ -367,6 +366,48 @@
             });
         }
 
+        function initFromExistingSession() {
+            // Check if there's already a valid extension session cookie
+            fetch("/auth/ext/me", {
+                method: "GET",
+                credentials: "include"
+            })
+            .then(function (res) {
+                if (!res.ok) {
+                    // 401 / invalid session -> stay in logged-out state, no UI change
+                    throw new Error("No active extension session");
+                }
+                return res.json();
+            })
+            .then(function (data) {
+                if (!data || !data.user || !data.session) {
+                    throw new Error("Malformed /auth/ext/me response");
+                }
+
+                var username = data.user.username || data.user.id;
+                currentSessionKey = data.session.session_key || null;
+                var expiresAtIso = data.session.expires_at || null;
+
+                updateUIToLoggedIn("@" + username, expiresAtIso);
+
+                // Inform extension that a session already exists
+                try {
+                    if (window.opener && !window.opener.closed) {
+                        window.opener.postMessage({
+                            type: "tg_ext_login_success",
+                            user: data.user
+                        }, "*");
+                    }
+                } catch (e) {
+                    console.warn("Could not postMessage existing-session to opener:", e);
+                }
+            })
+            .catch(function (err) {
+                // Silent for UX; user just sees "Connect" + textarea
+                console.log("[EXT] initFromExistingSession:", err.message);
+            });
+        }
+
         document.getElementById("ext-login-btn").addEventListener("click", function (e) {
             e.preventDefault();
             if (isLoggedIn) {
@@ -374,6 +415,11 @@
             } else {
                 handleExtLogin();
             }
+        });
+
+        window.addEventListener("load", function () {
+            initGAFields();
+            initFromExistingSession();
         });
     </script>
 
