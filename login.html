@@ -1,318 +1,139 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <title>Tchannelize Login</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+<head>
+  <meta charset="UTF-8" />
+  <title>Tchannelize Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-0YG6J7SYSV"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'G-0YG6J7SYSV');
 
-        <!-- Google tag (gtag.js) -->
-        <script async src="https://www.googletagmanager.com/gtag/js?id=G-0YG6J7SYSV"></script>
-        <script>
-            window.dataLayer = window.dataLayer || [];
-            function gtag() { dataLayer.push(arguments); }
-            gtag('js', new Date());
-            gtag('config', 'G-0YG6J7SYSV');
+    let gaClientId = null, gaSessionId = null, gaSessionNumber = null;
+    function initGAFields() {
+      if (!window.gtag) return;
+      try {
+        gtag('get', 'G-0YG6J7SYSV', 'client_id', function (cid) { gaClientId = cid; });
+        gtag('get', 'G-0YG6J7SYSV', 'session_id', function (sid) { gaSessionId = sid; });
+        gtag('get', 'G-0YG6J7SYSV', 'session_number', function (snum) { gaSessionNumber = snum; });
+      } catch (e) { console.warn('GA field error', e); }
+    }
+  </script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #e5e7eb; min-height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center; }
+    .card { background: #020617; border-radius: 16px; padding: 32px 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); max-width: 360px; width: 100%; text-align: center; }
+    h1 { margin-top: 0; margin-bottom: 8px; font-size: 1.4rem; }
+    p { margin-top: 0; margin-bottom: 16px; font-size: 0.9rem; color: #9ca3af; }
+    .status { margin-top: 16px; font-size: 0.85rem; min-height: 1.2em; color: #22c55e; word-break: break-word; }
+    .status.error { color: #f97373; }
+    .tg-logout-btn { display: inline-flex; align-items: center; justify-content: center; padding: 8px 16px; border-radius: 9999px; border: none; cursor: pointer; font-size: 0.95rem; font-weight: 500; background: #2aabee; color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.25); transition: transform 0.05s ease, box-shadow 0.05s ease, opacity 0.15s ease; }
+    .tg-logout-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.3); opacity: 0.95; }
+    .tg-logout-btn:active { transform: translateY(0); box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>Tchannelize Login</h1>
+  <p id="subtitle">Telegram Channels Analysis & Monetization App</p>
+  <div id="tg-login-container"></div>
+  <div id="status" class="status"></div>
+  <div id="session-key-wrapper" style="margin-top: 12px; display: none;">
+    <p style="margin: 0 0 8px; font-size: 0.85rem; color: #9ca3af;">Session key:</p>
+    <textarea id="session-key-textarea" readonly rows="2" style="width: 100%; font-size: 0.8rem; border-radius: 8px; padding: 6px; resize: none;"></textarea>
+  </div>
+</div>
+<script type="text/javascript">
+  var webSessionKey = null;
 
-            // --- GA fields capture ---
-            let gaClientId = null;
-            let gaSessionId = null;
-            let gaSessionNumber = null;
+  function setStatus(msg, isError) {
+    var el = document.getElementById("status");
+    el.textContent = msg || "";
+    el.classList.toggle("error", !!isError);
+  }
 
-            function initGAFields() {
-                if (!window.gtag) return;
-                try {
-                    gtag('get', 'G-0YG6J7SYSV', 'client_id', function (clientId) {
-                        gaClientId = clientId;
-                        console.log('GA client_id:', clientId);
-                    });
-                    gtag('get', 'G-0YG6J7SYSV', 'session_id', function (sessionId) {
-                        gaSessionId = sessionId;
-                        console.log('GA session_id:', sessionId);
-                    });
-                    gtag('get', 'G-0YG6J7SYSV', 'session_number', function (sessionNumber) {
-                        gaSessionNumber = sessionNumber;
-                        console.log('GA session_number:', sessionNumber);
-                    });
-                } catch (e) {
-                    console.warn('Could not get GA fields', e);
-                }
-            }
-        </script>
+  function buildGAContext() {
+    return {
+      client_id: gaClientId,
+      session_id: gaSessionId,
+      session_number: gaSessionNumber,
+      country: null, region: null, city: null, address: null, continent: null,
+      language: navigator.language,
+      browser_language: navigator.language
+    };
+  }
 
-        <style>
-            body {
-                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                background: #0f172a;
-                color: #e5e7eb;
-                min-height: 100vh;
-                margin: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            .card {
-                background: #020617;
-                border-radius: 16px;
-                padding: 32px 24px;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.4);
-                max-width: 360px;
-                width: 100%;
-                text-align: center;
-            }
-            h1 {
-                margin-top: 0;
-                margin-bottom: 8px;
-                font-size: 1.4rem;
-            }
-            p {
-                margin-top: 0;
-                margin-bottom: 16px;
-                font-size: 0.9rem;
-                color: #9ca3af;
-            }
-            .status {
-                margin-top: 16px;
-                font-size: 0.85rem;
-                min-height: 1.2em;
-                color: #22c55e;
-                word-break: break-word;
-            }
-            .status.error {
-                color: #f97373;
-            }
+  function applyLoggedInUI(username) {
+    var subtitle = document.getElementById("subtitle");
+    var container = document.getElementById("tg-login-container");
+    subtitle.textContent = "Logged in as @" + username;
+    container.innerHTML =
+      '<button id="logout-btn" class="tg-logout-btn" style="margin-right: 8px;">Log out</button>' +
+      '<button id="get-session-btn" class="tg-logout-btn">Get Session Key</button>';
 
-            .tg-logout-btn {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                padding: 8px 16px;
-                border-radius: 9999px;
-                border: none;
-                cursor: pointer;
-                font-size: 0.95rem;
-                font-weight: 500;
-                background: #2aabee;
-                color: #ffffff;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.25);
-                transition: transform 0.05s ease, box-shadow 0.05s ease, opacity 0.15s ease;
-            }
-            .tg-logout-btn:hover {
-                transform: translateY(-1px);
-                box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-                opacity: 0.95;
-            }
-            .tg-logout-btn:active {
-                transform: translateY(0);
-                box-shadow: 0 1px 2px rgba(0,0,0,0.2);
-            }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h1>Tchannelize Login</h1>
-            <p id="subtitle">Telegram Channels Analysis & Monetization App</p>
+    document.getElementById("logout-btn").onclick = function () {
+      setStatus("Logging out...");
+      fetch("/auth/session/logout", { method: "POST", credentials: "include" })
+        .finally(() => window.location.reload());
+    };
 
-            <div id="tg-login-container">
-                <!-- Telegram widget snippet -->
-                <script async
-                    src="https://telegram.org/js/telegram-widget.js?22"
-                    data-telegram-login="__TELEGRAM_BOT_NAME__"
-                    data-size="large"
-                    data-onauth="onTelegramAuth(user)"
-                    data-request-access="write">
-                </script>
-            </div>
+    document.getElementById("get-session-btn").onclick = function () {
+      setStatus("Generating session key...");
+      fetch("/auth/session/key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include"
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (!data.session_key) throw new Error("No session_key returned");
+          document.getElementById("session-key-textarea").value = data.session_key;
+          document.getElementById("session-key-wrapper").style.display = "block";
+          setStatus("Session key generated!");
+        })
+        .catch(err => setStatus("Failed: " + err.message, true));
+    };
+  }
 
-            <div id="status" class="status"></div>
+  function onTelegramAuth(user) {
+    setStatus("Authenticating with server...");
+    fetch("/auth/session/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ user: user, ga: buildGAContext() })
+    })
+      .then(res => res.json())
+      .then(data => {
+        webSessionKey = data.session_key;
+        applyLoggedInUI(user.username || user.id);
+        setStatus("Login successful.");
+      })
+      .catch(err => setStatus("Login failed: " + err.message, true));
+  }
 
-            <!-- Hidden by default; shown when user generates an extension session key -->
-            <div id="session-key-wrapper" style="margin-top: 12px; display: none;">
-                <p style="margin: 0 0 8px; font-size: 0.85rem; color: #9ca3af;">Session key:</p>
-                <textarea id="session-key-textarea"
-                          readonly
-                          rows="2"
-                          style="width: 100%; font-size: 0.8rem; border-radius: 8px; padding: 6px; resize: none;"></textarea>
-            </div>
-        </div>
+  function initFromExistingSession() {
+    fetch("/auth/me", { credentials: "include" })
+      .then(res => res.json())
+      .then(data => {
+        if (!data || !data.user || !data.session) throw new Error("Invalid session");
+        webSessionKey = data.session.session_key;
+        applyLoggedInUI(data.user.username || data.user.id);
+      })
+      .catch(err => console.log("Session init fail:", err.message));
+  }
 
-        <script type="text/javascript">
-            // Holds the web_app session key created on login (or restored from cookie via /auth/me)
-            var webSessionKey = null;
-
-            function setStatus(msg, isError) {
-                var el = document.getElementById("status");
-                el.textContent = msg || "";
-                if (isError) {
-                    el.classList.add("error");
-                } else {
-                    el.classList.remove("error");
-                }
-            }
-
-            function buildGAContext() {
-                // GA fields must match what the backend expects
-                return {
-                    client_id: gaClientId || null,
-                    session_id: gaSessionId || null,
-                    session_number: gaSessionNumber || null,
-                    country: null,
-                    region: null,
-                    city: null,
-                    address: null,
-                    continent: null,
-                    language: navigator.language || null,
-                    browser_language: navigator.language || null
-                };
-            }
-
-            function applyLoggedInUI(username) {
-                var subtitle = document.getElementById("subtitle");
-                var container = document.getElementById("tg-login-container");
-
-                subtitle.textContent = "Logged in as @" + username;
-
-                // Two buttons: Log out + Get Session Key
-                container.innerHTML =
-                    '<button id="logout-btn" class="tg-logout-btn" style="margin-right: 8px;">Log out</button>' +
-                    '<button id="get-session-btn" class="tg-logout-btn">Get Session Key</button>';
-
-                var logoutBtn = document.getElementById("logout-btn");
-                var getSessionBtn = document.getElementById("get-session-btn");
-
-                logoutBtn.addEventListener("click", function () {
-                    setStatus("Logging out...");
-
-                    fetch("/auth/logout", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json"
-                        },
-                        credentials: "include",
-                        body: JSON.stringify({
-                            session_key: webSessionKey
-                        })
-                    }).finally(function () {
-                        // Cookie is cleared server-side; reload to reset UI state
-                        window.location.reload();
-                    });
-                });
-
-                getSessionBtn.addEventListener("click", function () {
-                    if (!webSessionKey) {
-                        setStatus("No active web session. Please log in again.", true);
-                        return;
-                    }
-
-                    setStatus("Generating session key...");
-
-                    fetch("/auth/session/ext", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json"
-                        },
-                        credentials: "include",
-                        body: JSON.stringify({
-                            web_session_key: webSessionKey,
-                            ga: buildGAContext()
-                        })
-                    })
-                    .then(function (res) {
-                        if (!res.ok) {
-                            throw new Error("Server rejected request (" + res.status + ")");
-                        }
-                        return res.json();
-                    })
-                    .then(function (data) {
-                        if (!data.session_key) {
-                            throw new Error("No session_key returned from server");
-                        }
-
-                        var wrapper = document.getElementById("session-key-wrapper");
-                        var ta = document.getElementById("session-key-textarea");
-                        if (wrapper && ta) {
-                            ta.value = data.session_key;
-                            wrapper.style.display = "block";
-                        }
-
-                        setStatus("Session key generated! Copy and paste for ext. login.");
-                    })
-                    .catch(function (err) {
-                        console.error(err);
-                        setStatus("Could not generate session key: " + err.message, true);
-                    });
-                });
-            }
-
-            function onTelegramAuth(user) {
-                setStatus("Authenticating with server...");
-
-                var payload = {
-                    user: user,
-                    ga: buildGAContext()
-                };
-
-                fetch("/auth/telegram", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json"
-                    },
-                    credentials: "include",
-                    body: JSON.stringify(payload)
-                })
-                .then(function (res) {
-                    if (!res.ok) {
-                        throw new Error("Server rejected login (" + res.status + ")");
-                    }
-                    return res.json();
-                })
-                .then(function (data) {
-                    var username = data.user.username || data.user.id;
-                    // web_session_key comes from backend and matches the cookie-backed session
-                    webSessionKey = (data.session && data.session.session_key) || data.web_session_key || null;
-
-                    setStatus("Logged in as @" + username);
-                    applyLoggedInUI(username);
-                })
-                .catch(function (err) {
-                    console.error(err);
-                    setStatus("Login failed: " + err.message, true);
-                });
-            }
-
-            function initFromExistingSession() {
-                // If there is a valid WEB_SESSION_COOKIE, /auth/me will return the user + session
-                fetch("/auth/me", {
-                    method: "GET",
-                    credentials: "include"
-                })
-                .then(function (res) {
-                    if (!res.ok) {
-                        throw new Error("No active web session");
-                    }
-                    return res.json();
-                })
-                .then(function (data) {
-                    if (!data || !data.user || !data.session) {
-                        throw new Error("Malformed /auth/me response");
-                    }
-
-                    var username = data.user.username || data.user.id;
-                    webSessionKey = data.session.session_key || null;
-
-                    setStatus("Logged in as @" + username);
-                    applyLoggedInUI(username);
-                })
-                .catch(function (err) {
-                    // Silent failure; user simply sees the Telegram login button
-                    console.log("[WEB] initFromExistingSession:", err.message);
-                });
-            }
-
-            window.addEventListener("load", function () {
-                initGAFields();
-                initFromExistingSession();
-            });
-        </script>
-
-    </body>
+  window.addEventListener("load", () => {
+    initGAFields();
+    initFromExistingSession();
+    document.getElementById("tg-login-container").innerHTML =
+      '<script async src="https://telegram.org/js/telegram-widget.js?22" ' +
+      'data-telegram-login="__TELEGRAM_BOT_NAME__" ' +
+      'data-size="large" ' +
+      'data-onauth="onTelegramAuth(user)" ' +
+      'data-request-access="write"><\/script>';
+  });
+</script>
+</body>
 </html>
