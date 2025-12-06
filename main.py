@@ -277,24 +277,16 @@ async def ext_login_page() -> HTMLResponse:
 @app.post("/auth/ext/session")
 async def ext_session_auth(payload: dict, request: Request):
     """
-    Auth flow for the Chrome extension using a session_key
-    obtained from the web app via "Get Session Key".
-
-    Expects:
-      {
-        "session_key": "..."
-      }
+    Validates a session_key created from the web app and
+    marks it as used by the extension.
     """
     session_key = (payload or {}).get("session_key")
     if not session_key:
-        raise HTTPException(status_code=400, detail="session_key is required")
+        raise HTTPException(status_code=400, detail="Missing session_key")
 
     session = session_db.resolve_session_key(session_key)
     if not session:
-        raise HTTPException(
-            status_code=401,
-            detail="Session key invalid or expired. Please get a new key from the web app.",
-        )
+        raise HTTPException(status_code=401, detail="Invalid or expired session_key")
 
     telegram_id = session.get("telegram_id")
     if not telegram_id:
@@ -304,8 +296,16 @@ async def ext_session_auth(payload: dict, request: Request):
     if not user:
         raise HTTPException(status_code=404, detail="User not found for this session")
 
-    # Mark this session as used by the extension (front_end="extension")
+    # mark as extension session
     session_db.mark_session_used_by_extension(session_key)
+
+    # prepare expiry as ISO string for JSON
+    expires_at = session.get("expires_at")
+    expires_at_str = None
+    if isinstance(expires_at, datetime):
+        expires_at_str = expires_at.isoformat()
+    elif isinstance(expires_at, str):
+        expires_at_str = expires_at
 
     public_user = {
         "id": user.get("telegram_id"),
@@ -319,7 +319,13 @@ async def ext_session_auth(payload: dict, request: Request):
         "is_admin": user.get("is_admin"),
     }
 
-    return JSONResponse({"ok": True, "user": public_user})
+    session_info = {
+        "session_key": session_key,
+        "expires_at": expires_at_str,
+    }
+
+    return JSONResponse({"ok": True, "user": public_user, "session": session_info})
+
 
 
 # ---------------------------
