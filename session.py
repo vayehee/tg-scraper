@@ -22,6 +22,7 @@ SESSION_SCHEMA: Dict[str, Any] = {
     # Context
     "front_end": None,
     "user_agent": None,
+    "browser_language": None,
 
     # GA-related
     "ga_client_id": None,
@@ -35,8 +36,6 @@ SESSION_SCHEMA: Dict[str, Any] = {
     "city": None,
     "address": None,
     "continent": None,
-    "language": None,
-    "browser_language": None,
 }
 
 _PROJECT_ID = os.getenv("FIRESTORE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
@@ -63,12 +62,13 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def apply_session_schema(data: Dict[str, Any]) -> Dict[str, Any]:
-    full = SESSION_SCHEMA.copy()
-    for k, v in data.items():
-        if k in SESSION_SCHEMA:
-            full[k] = v
-    return full
+def enforce_schema(record: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure session record:
+    - Has all schema fields (add defaults if missing)
+    - Removes fields not present in schema
+    """
+    return {k: record.get(k, SESSION_SCHEMA[k]) for k in SESSION_SCHEMA}
 
 
 # --------------------------------------------------------------------------
@@ -86,7 +86,6 @@ async def create_session_for_user(
 
     ga_ctx = ga_ctx or {}
 
-    # NEW REQUIRED LOGIC:
     # Only one valid session per (telegram_id, front_end)
     if front_end is not None:
         q = (
@@ -114,6 +113,7 @@ async def create_session_for_user(
 
         "front_end": front_end,
         "user_agent": user_agent,
+        "browser_language": ga_ctx.get("browser_language"),
 
         "ga_client_id": ga_ctx.get("client_id"),
         "ga_session_id": ga_ctx.get("session_id"),
@@ -125,11 +125,9 @@ async def create_session_for_user(
         "city": ga_ctx.get("city"),
         "address": ga_ctx.get("address"),
         "continent": ga_ctx.get("continent"),
-        "language": ga_ctx.get("language"),
-        "browser_language": ga_ctx.get("browser_language"),
     }
 
-    stored = apply_session_schema(base_data)
+    stored = enforce_schema(base_data)
     sessions_col().document(session_key).set(stored)
 
     logger.info(
@@ -147,7 +145,7 @@ def resolve_session_key(session_key: str) -> Optional[Dict[str, Any]]:
     if not doc.exists:
         return None
 
-    data = apply_session_schema(doc.to_dict() or {})
+    data = enforce_schema(doc.to_dict() or {})
     if not data.get("valid", True):
         return None
 
@@ -188,7 +186,7 @@ def mark_session_used_by_extension(session_key: str) -> Optional[Dict[str, Any]]
     if not snap.exists:
         return None
 
-    data = apply_session_schema(snap.to_dict() or {})
+    data = enforce_schema(snap.to_dict() or {})
     if not data.get("valid", True):
         return data
 

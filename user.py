@@ -62,15 +62,18 @@ def users_col() -> firestore.CollectionReference:
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-def apply_user_schema(data: Dict[str, Any]) -> Dict[str, Any]:
+def enforce_schema(record: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Ensure all USER_SCHEMA keys exist in the returned dict.
-    Also makes sure admin_of is a fresh list instance.
+    Enforces conformity to USER_SCHEMA:
+    - Only keeps keys that exist in USER_SCHEMA
+    - Adds missing keys with default values
+    - Ensures `admin_of` is always a list
     """
-    full = USER_SCHEMA.copy()
-    full.update({k: v for k, v in data.items() if k in USER_SCHEMA})
-    full["admin_of"] = list(full.get("admin_of") or [])
-    return full
+    clean: Dict[str, Any] = {
+        key: record.get(key, default) for key, default in USER_SCHEMA.items()
+    }
+    clean["admin_of"] = list(clean.get("admin_of") or [])
+    return clean
 
 # -----------------------------------------------------------------------------
 # Public operations
@@ -112,7 +115,7 @@ def create_or_update_user_from_telegram(
         updated["login_count"] = login_count
         updated["updated_at"] = now
 
-        final = apply_user_schema(updated)
+        final = enforce_schema(updated)
         doc_ref.set(final)
         logger.info("Updated existing user %s (login_count=%s)", doc_id, login_count)
     else:
@@ -126,7 +129,7 @@ def create_or_update_user_from_telegram(
         base_data.setdefault("is_admin", USER_SCHEMA["is_admin"])
         base_data.setdefault("admin_of", USER_SCHEMA["admin_of"])
 
-        final = apply_user_schema(base_data)
+        final = enforce_schema(base_data)
         doc_ref.set(final)
         logger.info("Created new user %s", doc_id)
 
@@ -136,4 +139,4 @@ def get_user_by_id(telegram_id: str) -> Optional[Dict[str, Any]]:
     doc = users_col().document(str(telegram_id)).get()
     if not doc.exists:
         return None
-    return apply_user_schema(doc.to_dict() or {})
+    return enforce_schema(doc.to_dict() or {})
