@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <title>Telechan login</title>
+    <title>Tchannelize Login (ext.)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <!-- Google tag (gtag.js) for EXTENSION data stream -->
@@ -119,8 +119,8 @@
 </head>
 <body>
     <div class="card">
-        <h1>Telechan login</h1>
-        <p id="subtitle">Paste your Telechan session key from the web app.</p>
+        <h1>Tchannelize Login</h1>
+        <p id="subtitle">Telegram Channels Analysis & Monetization App</p>
 
         <div id="tg-login-container">
             <div id="session-key-wrapper">
@@ -128,13 +128,13 @@
                     Session key:
                 </p>
                 <textarea id="session-key-input"
-                          rows="3"
+                          rows="2"
                           placeholder="Paste session key here"></textarea>
             </div>
 
             <div style="margin-top: 12px;">
                 <button id="ext-login-btn" class="tg-logout-btn">
-                    Connect
+                    Login
                 </button>
             </div>
         </div>
@@ -211,13 +211,13 @@
 
             var expiryText = formatExpiry(expiresAtIso);
             setStatus(
-                "Logged in as " + username + ". Session to expire on " + expiryText + ".",
+                "Logged in as " + username + "\n. Session will expire on " + expiryText + ".",
                 false
             );
 
             var subtitle = document.getElementById("subtitle");
             if (subtitle) {
-                subtitle.textContent = "Extension connected. You may close this window.";
+                subtitle.textContent = "Logged in successful! You may close this window.";
             }
         }
 
@@ -241,7 +241,7 @@
                 input.value = "";
             }
 
-            setStatus(message || "Session ended. Paste a session key to connect.", false);
+            setStatus(message || "Session expired! Paste a session key to connect.", false);
 
             var subtitle = document.getElementById("subtitle");
             if (subtitle) {
@@ -254,7 +254,7 @@
             var key = (input.value || "").trim();
 
             if (!key) {
-                setStatus("Please paste your session key first.", true);
+                setStatus("Paste a valid session key.", true);
                 return;
             }
 
@@ -266,7 +266,7 @@
                 // , ga: buildGAContext()
             };
 
-            fetch("/auth/ext/session", {
+            fetch("/auth/session/ext", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
@@ -282,13 +282,13 @@
 
                             if (detail.toLowerCase().indexOf("already used") !== -1) {
                                 setStatus(
-                                    'Session key already used. Click <a href="/login" target="_blank">here</a> to generate a new one.',
+                                    'This session key is already claimed! Click <a href="/login" target="_blank">here</a> to generate a new one.',
                                     true
                                 );
                             } else if (detail.toLowerCase().indexOf("invalid") !== -1 ||
                                        detail.toLowerCase().indexOf("expired") !== -1) {
                                 setStatus(
-                                    'Session key is invalid or expired. Click <a href="/login" target="_blank">here</a> to generate a new one.',
+                                    'This session key is invalid or expired. Click <a href="/login" target="_blank">here</a> to generate a new one.',
                                     true
                                 );
                             } else {
@@ -351,7 +351,7 @@
 
         function handleLogout() {
             if (!currentSessionKey) {
-                updateUIToLoggedOut("Session ended.");
+                updateUIToLoggedOut("Session has ended.");
                 return;
             }
 
@@ -368,7 +368,7 @@
                 })
             })
             .then(function () {
-                updateUIToLoggedOut("Logged out. Paste a new session key to connect.");
+                updateUIToLoggedOut("Logged out. Paste a new session key to login.");
 
                 try {
                     if (window.opener && !window.opener.closed) {
@@ -387,7 +387,7 @@
         }
 
         function initFromExistingSession() {
-            fetch("/auth/ext/me", {
+            fetch("/auth/me/ext", {
                 method: "GET",
                 credentials: "include"
             })
@@ -399,12 +399,13 @@
             })
             .then(function (data) {
                 if (!data || !data.user || !data.session) {
-                    throw new Error("Malformed /auth/ext/me response");
+                    throw new Error("Malformed /auth/me/ext response");
                 }
 
                 var username = data.user.username || data.user.id;
                 currentSessionKey = data.session.session_key || null;
                 var expiresAtIso = data.session.expires_at || null;
+
 
                 updateUIToLoggedIn("@" + username, expiresAtIso);
             })

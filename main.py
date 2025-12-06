@@ -246,7 +246,7 @@ async def ext_login_page() -> HTMLResponse:
     return HTMLResponse(content=html)
 
 
-@app.post("/auth/ext/session")
+@app.post("/auth/session/ext")
 async def ext_session_auth(payload: dict, request: Request):
     """
     Validates a session_key created from the web app and
@@ -409,7 +409,7 @@ async def auth_me(request: Request):
     })
 
 
-@app.get("/auth/ext/me")
+@app.get("/auth/me/ext")
 async def auth_ext_me(request: Request):
     session_key = request.cookies.get(EXT_SESSION_COOKIE)
     if not session_key:
