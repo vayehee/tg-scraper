@@ -127,13 +127,19 @@
   window.addEventListener("load", () => {
     initGAFields();
     initFromExistingSession();
-    document.getElementById("tg-login-container").innerHTML =
-      '<script async src="https://telegram.org/js/telegram-widget.js?22" ' +
-      'data-telegram-login="__TELEGRAM_BOT_NAME__" ' +
-      'data-size="large" ' +
-      'data-onauth="onTelegramAuth(user)" ' +
-      'data-request-access="write"><\/script>';
-  });
+
+    // Dynamically create and append Telegram login widget script
+    const script = document.createElement("script");
+    script.src = "https://telegram.org/js/telegram-widget.js?22";
+    script.setAttribute("data-telegram-login", "__TELEGRAM_BOT_NAME__");
+    script.setAttribute("data-size", "large");
+    script.setAttribute("data-onauth", "onTelegramAuth(user)");
+    script.setAttribute("data-request-access", "write");
+    script.async = true;
+
+    document.getElementById("tg-login-container").appendChild(script);
+});
+
 </script>
 </body>
 </html>
