@@ -80,36 +80,48 @@ async def login_page() -> HTMLResponse:
 
 
 @app.post("/auth/session/login")
-async def session_login(payload: dict, request: Request):
-    user_data = payload.get("user")
-    if not user_data or not verify_telegram_auth(user_data):
-        raise HTTPException(status_code=400, detail="Invalid Telegram login")
+async def login(payload: Dict[str, Any], request: Request, response: Response):
+    try:
+        if "user" not in payload:
+            raise HTTPException(status_code=400, detail="Missing Telegram user payload")
 
-    user = user_db.create_or_update_user_from_telegram(
-        tg_payload=user_data,
-        ga_ctx=None,
-        user_agent=request.headers.get("user-agent"),
-        source="web_app",
-    )
+        user = userdb.create_or_update_user_from_telegram(
+            tg_payload=payload["user"],
+            ga_ctx=payload.get("ga"),
+            user_agent=request.headers.get("User-Agent"),
+            source="telegram_widget",
+        )
 
-    session = session_db.create_session_for_user(
-        telegram_id=user["telegram_id"],
-        source="web_app",
-        user_agent=request.headers.get("user-agent"),
-        ga_ctx=None,
-        ttl_hours=WEB_SESSION_TTL_HOURS,
-    )
+        # 🔧 THIS LINE IS LIKELY CRASHING:
+        new_session = await session.create_session_for_user(
+            telegram_id=user["telegram_id"],
+            front_end="web_app",
+            user_agent=request.headers.get("User-Agent"),
+            ga_ctx=payload.get("ga"),
+            ip=request.client.host if request.client else None,
+        )
 
-    response = JSONResponse({"ok": True, "session_key": session["session_key"]})
-    response.set_cookie(
-        WEB_SESSION_COOKIE,
-        session["session_key"],
-        max_age=WEB_SESSION_TTL_HOURS * 3600,
-        httponly=True,
-        secure=True,
-        samesite="Lax",
-    )
-    return response
+        # Set secure cookie
+        response.set_cookie(
+            key="session_key",
+            value=new_session["session_key"],
+            max_age=7 * 24 * 3600,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+        )
+
+        return {"session_key": new_session["session_key"]}
+
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print("🔥 /auth/session/login error:", tb)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error", "detail": str(e)},
+        )
+
 
 
 @app.post("/auth/session/key")
