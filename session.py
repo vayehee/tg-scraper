@@ -75,7 +75,7 @@ def apply_session_schema(data: Dict[str, Any]) -> Dict[str, Any]:
 # PUBLIC API
 # --------------------------------------------------------------------------
 
-def create_session_for_user(
+async def create_session_for_user(
     telegram_id: str,
     front_end: Optional[str],
     user_agent: Optional[str],

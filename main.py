@@ -122,7 +122,7 @@ async def session_key(request: Request):
     if not session:
         raise HTTPException(status_code=401, detail="Session not found")
 
-    new_session = session_db.create_session_for_user(
+    new_session = await session_db.create_session_for_user(
         telegram_id=session["telegram_id"],
         front_end=None,
         user_agent=request.headers.get("user-agent"),
