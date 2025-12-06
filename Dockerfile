@@ -23,7 +23,9 @@ COPY scrape.py .
 COPY gpt.py .
 COPY gtranslate.py .
 COPY user.py .
+COPY session.py .
 COPY login.html .
+COPY ext_login.html .
 # COPY strings.py .
 
 # Cloud Run port

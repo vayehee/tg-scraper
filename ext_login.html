@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Telechan login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Google tag (gtag.js) for EXTENSION data stream -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-RQSS5RW310"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { dataLayer.push(arguments); }
+        gtag('js', new Date());
+        gtag('config', 'G-RQSS5RW310');
+
+        // --- GA fields capture ---
+        let gaClientId = null;
+        let gaSessionId = null;
+        let gaSessionNumber = null;
+
+        function initGAFields() {
+            if (!window.gtag) return;
+            try {
+                gtag('get', 'G-RQSS5RW310', 'client_id', function (clientId) {
+                    gaClientId = clientId;
+                    console.log('[EXT] GA client_id:', clientId);
+                });
+                gtag('get', 'G-RQSS5RW310', 'session_id', function (sessionId) {
+                    gaSessionId = sessionId;
+                    console.log('[EXT] GA session_id:', sessionId);
+                });
+                gtag('get', 'G-RQSS5RW310', 'session_number', function (sessionNumber) {
+                    gaSessionNumber = sessionNumber;
+                    console.log('[EXT] GA session_number:', sessionNumber);
+                });
+            } catch (e) {
+                console.warn('[EXT] Could not get GA fields', e);
+            }
+        }
+
+        window.addEventListener('load', initGAFields);
+    </script>
+
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0f172a;
+            color: #e5e7eb;
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card {
+            background: #020617;
+            border-radius: 16px;
+            padding: 32px 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+            max-width: 360px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 {
+            margin-top: 0;
+            margin-bottom: 8px;
+            font-size: 1.4rem;
+        }
+        p {
+            margin-top: 0;
+            margin-bottom: 16px;
+            font-size: 0.9rem;
+            color: #9ca3af;
+        }
+        .status {
+            margin-top: 16px;
+            font-size: 0.85rem;
+            min-height: 1.2em;
+            color: #22c55e;
+            word-break: break-word;
+        }
+        .status.error {
+            color: #f97373;
+        }
+
+        .tg-logout-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 16px;
+            border-radius: 9999px;
+            border: none;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+            background: #2aabee;
+            color: #ffffff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.25);
+            transition: transform 0.05s ease, box-shadow 0.05s ease, opacity 0.15s ease;
+        }
+        .tg-logout-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            opacity: 0.95;
+        }
+        .tg-logout-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+
+        textarea {
+            width: 100%;
+            font-size: 0.85rem;
+            border-radius: 8px;
+            padding: 6px;
+            resize: none;
+            border: none;
+            outline: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Telechan login</h1>
+        <p id="subtitle">Paste your Telechan session key from the web app.</p>
+
+        <div id="tg-login-container">
+            <p style="margin-bottom: 8px; font-size: 0.85rem; color: #9ca3af;">
+                Session key:
+            </p>
+            <textarea id="session-key-input"
+                      rows="3"
+                      placeholder="Paste session key here"></textarea>
+
+            <div style="margin-top: 12px;">
+                <button id="ext-login-btn" class="tg-logout-btn">
+                    Connect
+                </button>
+            </div>
+        </div>
+
+        <div id="status" class="status"></div>
+    </div>
+
+    <script type="text/javascript">
+        function setStatus(msg, isError) {
+            var el = document.getElementById("status");
+            el.textContent = msg || "";
+            if (isError) {
+                el.classList.add("error");
+            } else {
+                el.classList.remove("error");
+            }
+        }
+
+        function buildGAContext() {
+            // Currently unused by /auth/ext/session, but ready if needed later.
+            return {
+                client_id: gaClientId || null,
+                session_id: gaSessionId || null,
+                session_number: gaSessionNumber || null,
+                country: null,
+                region: null,
+                city: null,
+                address: null,
+                continent: null,
+                language: navigator.language || null,
+                browser_language: navigator.language || null
+            };
+        }
+
+        function handleExtLogin() {
+            var input = document.getElementById("session-key-input");
+            var key = (input.value || "").trim();
+
+            if (!key) {
+                setStatus("Please paste your session key first.", true);
+                return;
+            }
+
+            setStatus("Validating session key...");
+
+            var payload = {
+                session_key: key
+                // If you later want GA here:
+                // , ga: buildGAContext()
+            };
+
+            fetch("/auth/ext/session", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                credentials: "include",
+                body: JSON.stringify(payload)
+            })
+            .then(function (res) {
+                if (!res.ok) {
+                    return res.json()
+                        .catch(function () {
+                            throw new Error("Server rejected login (" + res.status + ")");
+                        })
+                        .then(function (data) {
+                            throw new Error(data.detail || ("Server rejected login (" + res.status + ")"));
+                        });
+                }
+                return res.json();
+            })
+            .then(function (data) {
+                if (!data || !data.user) {
+                    throw new Error("No user returned from server");
+                }
+
+                var username = data.user.username || data.user.id;
+                setStatus("Logged in as @" + username);
+
+                // Optionally update UI to reflect success
+                var subtitle = document.getElementById("subtitle");
+                if (subtitle) {
+                    subtitle.textContent = "Extension connected as @" + username + ". You can close this window.";
+                }
+
+                try {
+                    if (window.opener && !window.opener.closed) {
+                        window.opener.postMessage({
+                            type: "tg_ext_login_success",
+                            user: data.user
+                        }, "*");
+                    }
+                } catch (e) {
+                    console.warn("Could not postMessage to opener:", e);
+                }
+            })
+            .catch(function (err) {
+                console.error(err);
+                setStatus("Login failed: " + err.message, true);
+
+                try {
+                    if (window.opener && !window.opener.closed) {
+                        window.opener.postMessage({
+                            type: "tg_ext_login_error",
+                            error: err.message
+                        }, "*");
+                    }
+                } catch (e) {
+                    console.warn("Could not postMessage error to opener:", e);
+                }
+            });
+        }
+
+        document.getElementById("ext-login-btn").addEventListener("click", function (e) {
+            e.preventDefault();
+            handleExtLogin();
+        });
+    </script>
+
+</body>
+</html>

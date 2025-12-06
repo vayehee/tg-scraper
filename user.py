@@ -27,29 +27,13 @@ USER_SCHEMA: Dict[str, Any] = {
     "restricted": False,        # bool: can be used to soft-disable a user
     "is_admin": False,          # bool: manual flag for privileged users
 
-    # Login bookkeeping
+    # Login bookkeeping (user-level summary)
     "created_at": None,         # ISO8601 str (UTC)
     "updated_at": None,         # ISO8601 str (UTC)
     "last_login_at": None,      # ISO8601 str (UTC)
     "last_login_source": None,  # e.g. "telegram_widget"
     "last_login_user_agent": None,
     "login_count": 0,           # int
-
-    # --- GA-related fields ---
-
-    # Anonymous GA identity and session
-    "ga_client_id": None,           # GA4 client_id
-    "ga_last_session_id": None,     # GA4 session_id (if we send it)
-    "ga_last_session_number": None, # GA4 session_number (if we send it)
-
-    # Geo & language (from GA or other enrichment)
-    "country": None,
-    "region": None,
-    "city": None,
-    "address": None,
-    "continent": None,
-    "language": None,               # preferred / app language
-    "browser_language": None,       # from navigator.language or headers
 }
 
 # -----------------------------------------------------------------------------
@@ -85,12 +69,15 @@ def _now_iso() -> str:
 
 
 def apply_user_schema(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure all USER_SCHEMA keys exist in the returned dict.
+    Also makes sure admin_of is a fresh list instance.
+    """
     full = USER_SCHEMA.copy()
     full.update({k: v for k, v in data.items() if k in USER_SCHEMA})
     # ensure a fresh list, not the shared default
     full["admin_of"] = list(full.get("admin_of") or [])
     return full
-
 
 
 # -----------------------------------------------------------------------------
@@ -104,18 +91,18 @@ def create_or_update_user_from_telegram(
     source: str = "telegram_widget",
 ) -> Dict[str, Any]:
     """
-    Upsert a user document in Firestore based on Telegram Login payload
-    and GA context (client/session/geo/language).
+    Upsert a user document in Firestore based on Telegram Login payload.
 
     - Uses Telegram user id as Firestore document id.
     - On first login: creates a new doc with login_count=1.
-    - On subsequent logins: updates profile + GA fields, bumps login_count.
+    - On subsequent logins: updates profile, bumps login_count and timestamps.
 
-    Returns the stored user document (dict) after update.
+    GA / geo / language context is now session-level and handled in session.py.
     """
     if "id" not in tg_payload:
         raise ValueError("Telegram payload is missing 'id' field")
 
+    # kept for interface compatibility; not used at user level anymore
     ga_ctx = ga_ctx or {}
 
     doc_id = str(tg_payload["id"])
@@ -135,20 +122,6 @@ def create_or_update_user_from_telegram(
         "last_login_at": now,
         "last_login_source": source,
         "last_login_user_agent": user_agent,
-
-        # GA-related
-        "ga_client_id": ga_ctx.get("client_id"),
-        "ga_last_session_id": ga_ctx.get("session_id"),
-        "ga_last_session_number": ga_ctx.get("session_number"),
-
-        # Geo & language (currently placeholders; can be enriched later)
-        "country": ga_ctx.get("country"),
-        "region": ga_ctx.get("region"),
-        "city": ga_ctx.get("city"),
-        "address": ga_ctx.get("address"),
-        "continent": ga_ctx.get("continent"),
-        "language": ga_ctx.get("language"),
-        "browser_language": ga_ctx.get("browser_language"),
     }
 
     if snap.exists:
