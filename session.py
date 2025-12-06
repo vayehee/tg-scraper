@@ -11,26 +11,25 @@ from google.cloud import firestore
 logger = logging.getLogger(__name__)
 
 SESSION_SCHEMA: Dict[str, Any] = {
-    "session_key": None,          # str: public-facing key user copies/pastes
-    "telegram_id": None,          # str: user this session belongs to
+    "session_key": None,
+    "telegram_id": None,
 
     # Lifecycle
-    "created_at": None,           # datetime (UTC) in Firestore
-    "expires_at": None,           # datetime (UTC) in Firestore
-    "valid": True,                # bool: true when created, false when invalidated/expired
+    "created_at": None,
+    "expires_at": None,
+    "valid": True,
 
     # Context
-    # e.g. "web_app", "extension", or None (for pairing session before ext uses it)
-    "front_end": None,            # str | None
-    "user_agent": None,           # str | None
+    "front_end": None,
+    "user_agent": None,
 
-    # GA-related (session-level analytics context)
+    # GA-related
     "ga_client_id": None,
     "ga_session_id": None,
     "ga_session_number": None,
 
-    # Geo & language (per-session context)
-    "ip": None,                   # str | None
+    # Geo & language
+    "ip": None,
     "country": None,
     "region": None,
     "city": None,
@@ -39,10 +38,6 @@ SESSION_SCHEMA: Dict[str, Any] = {
     "language": None,
     "browser_language": None,
 }
-
-# --------------------------------------------------------------------------
-# Firestore plumbing
-# --------------------------------------------------------------------------
 
 _PROJECT_ID = os.getenv("FIRESTORE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
 _db: Optional[firestore.Client] = None
@@ -64,16 +59,11 @@ def sessions_col() -> firestore.CollectionReference:
     return get_db().collection("sessions")
 
 
-# --------------------------------------------------------------------------
-# Internal helpers
-# --------------------------------------------------------------------------
-
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
 def apply_session_schema(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Overlay SESSION_SCHEMA defaults with provided data (no mutation)."""
     full = SESSION_SCHEMA.copy()
     for k, v in data.items():
         if k in SESSION_SCHEMA:
@@ -82,7 +72,7 @@ def apply_session_schema(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Public API
+# PUBLIC API
 # --------------------------------------------------------------------------
 
 def create_session_for_user(
@@ -93,17 +83,23 @@ def create_session_for_user(
     ttl_hours: int = 24,
     ip: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Create a new session:
 
-    - `front_end="web_app"` → normal web session
-    - `front_end="extension"` → direct extension session (if ever used)
-    - `front_end=None` → pairing session (key to be pasted into ext_login)
-
-    Document ID == session_key.
-    """
     ga_ctx = ga_ctx or {}
 
+    # NEW REQUIRED LOGIC:
+    # Only one valid session per (telegram_id, front_end)
+    if front_end is not None:
+        q = (
+            sessions_col()
+            .where("telegram_id", "==", str(telegram_id))
+            .where("front_end", "==", front_end)
+            .where("valid", "==", True)
+        )
+        for doc in q.stream():
+            doc.reference.set({"valid": False}, merge=True)
+            logger.info("Invalidated previous session %s", doc.id)
+
+    # Create new session
     session_key = secrets.token_urlsafe(32)
     now = _now_utc()
     expires_at = now + timedelta(hours=ttl_hours)
@@ -116,7 +112,7 @@ def create_session_for_user(
         "expires_at": expires_at,
         "valid": True,
 
-        "front_end": front_end,  # None for pairing; "web_app" / "extension" otherwise
+        "front_end": front_end,
         "user_agent": user_agent,
 
         "ga_client_id": ga_ctx.get("client_id"),
@@ -133,9 +129,9 @@ def create_session_for_user(
         "browser_language": ga_ctx.get("browser_language"),
     }
 
-    doc_ref = sessions_col().document(session_key)
     stored = apply_session_schema(base_data)
-    doc_ref.set(stored)
+    sessions_col().document(session_key).set(stored)
+
     logger.info(
         "Created session %s for telegram_id=%s (front_end=%s, ttl=%sh)",
         session_key, telegram_id, front_end, ttl_hours
@@ -144,12 +140,6 @@ def create_session_for_user(
 
 
 def resolve_session_key(session_key: str) -> Optional[Dict[str, Any]]:
-    """
-    Fetch a session by key.
-
-    - Returns None if not found, invalid, or expired.
-    - Automatically marks expired sessions as valid=False.
-    """
     if not session_key:
         return None
 
@@ -165,8 +155,6 @@ def resolve_session_key(session_key: str) -> Optional[Dict[str, Any]]:
     now = _now_utc()
 
     if isinstance(expires_at, datetime) and expires_at < now:
-        # auto-expire
-        data["valid"] = False
         sessions_col().document(session_key).set({"valid": False}, merge=True)
         logger.info("Session %s expired", session_key)
         return None
@@ -175,10 +163,6 @@ def resolve_session_key(session_key: str) -> Optional[Dict[str, Any]]:
 
 
 def invalidate_session(session_key: str, reason: Optional[str] = None) -> None:
-    """
-    Mark a session as invalid (e.g. on logout).
-    `reason` is only logged, not stored.
-    """
     if not session_key:
         return
 
@@ -196,14 +180,6 @@ def invalidate_session(session_key: str, reason: Optional[str] = None) -> None:
 
 
 def mark_session_used_by_extension(session_key: str) -> Optional[Dict[str, Any]]:
-    """
-    Set `front_end="extension"` to indicate the key has been claimed by ext_login.
-
-    Called AFTER resolve_session_key has already ensured:
-    - session exists
-    - session.valid == True
-    - session not expired
-    """
     if not session_key:
         return None
 
