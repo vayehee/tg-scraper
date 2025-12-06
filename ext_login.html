@@ -150,7 +150,7 @@
 
         function setStatus(msg, isError) {
             var el = document.getElementById("status");
-            el.textContent = msg || "";
+            el.innerHTML = msg || "";
             if (isError) {
                 el.classList.add("error");
             } else {
@@ -277,30 +277,60 @@
             .then(function (res) {
                 if (!res.ok) {
                     return res.json()
-                        .catch(function () {
-                            throw new Error("Server rejected login (" + res.status + ")");
-                        })
                         .then(function (data) {
-                            throw new Error(data.detail || ("Server rejected login (" + res.status + ")"));
+                            var detail = (data && data.detail) ? String(data.detail) : "";
+
+                            if (detail.toLowerCase().indexOf("already used") !== -1) {
+                                setStatus(
+                                    'Session key already used. Click <a href="/login" target="_blank">here</a> to generate a new one.',
+                                    true
+                                );
+                            } else if (detail.toLowerCase().indexOf("invalid") !== -1 ||
+                                       detail.toLowerCase().indexOf("expired") !== -1) {
+                                setStatus(
+                                    'Session key is invalid or expired. Click <a href="/login" target="_blank">here</a> to generate a new one.',
+                                    true
+                                );
+                            } else {
+                                setStatus(
+                                    "Login failed: " + (detail || ("Server rejected login (" + res.status + ")")),
+                                    true
+                                );
+                            }
+
+                            // Also notify opener about error
+                            try {
+                                if (window.opener && !window.opener.closed) {
+                                    window.opener.postMessage({
+                                        type: "tg_ext_login_error",
+                                        error: detail || ("Server rejected login (" + res.status + ")")
+                                    }, "*");
+                                }
+                            } catch (e) {
+                                console.warn("Could not postMessage error to opener:", e);
+                            }
+                        })
+                        .catch(function () {
+                            setStatus("Login failed (" + res.status + ")", true);
                         });
                 }
+
                 return res.json();
             })
             .then(function (data) {
+                // If error was already handled above, data might be undefined
                 if (!data || !data.user) {
-                    throw new Error("No user returned from server");
+                    return;
                 }
 
                 var username = data.user.username || data.user.id;
 
-                // Session info from backend (recommended)
                 var sessionInfo = data.session || {};
                 currentSessionKey = sessionInfo.session_key || key;
                 var expiresAtIso = sessionInfo.expires_at || null;
 
                 updateUIToLoggedIn("@" + username, expiresAtIso);
 
-                // Notify Chrome extension popup (if opened from it)
                 try {
                     if (window.opener && !window.opener.closed) {
                         window.opener.postMessage({
@@ -314,18 +344,8 @@
             })
             .catch(function (err) {
                 console.error(err);
+                // This catch is mainly for network / unexpected errors
                 setStatus("Login failed: " + err.message, true);
-
-                try {
-                    if (window.opener && !window.opener.closed) {
-                        window.opener.postMessage({
-                            type: "tg_ext_login_error",
-                            error: err.message
-                        }, "*");
-                    }
-                } catch (e) {
-                    console.warn("Could not postMessage error to opener:", e);
-                }
             });
         }
 
@@ -367,15 +387,13 @@
         }
 
         function initFromExistingSession() {
-            // Check if there's already a valid extension session cookie
             fetch("/auth/ext/me", {
                 method: "GET",
                 credentials: "include"
             })
             .then(function (res) {
                 if (!res.ok) {
-                    // 401 / invalid session -> stay in logged-out state, no UI change
-                    throw new Error("No active extension session");
+                    throw new Error("No active ext session");
                 }
                 return res.json();
             })
@@ -389,21 +407,8 @@
                 var expiresAtIso = data.session.expires_at || null;
 
                 updateUIToLoggedIn("@" + username, expiresAtIso);
-
-                // Inform extension that a session already exists
-                try {
-                    if (window.opener && !window.opener.closed) {
-                        window.opener.postMessage({
-                            type: "tg_ext_login_success",
-                            user: data.user
-                        }, "*");
-                    }
-                } catch (e) {
-                    console.warn("Could not postMessage existing-session to opener:", e);
-                }
             })
             .catch(function (err) {
-                // Silent for UX; user just sees "Connect" + textarea
                 console.log("[EXT] initFromExistingSession:", err.message);
             });
         }
