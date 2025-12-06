@@ -5,22 +5,37 @@
   <title>Tchannelize Login</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-0YG6J7SYSV"></script>
-  <script>
+    <script>
     window.dataLayer = window.dataLayer || [];
     function gtag() { dataLayer.push(arguments); }
+
     gtag('js', new Date());
     gtag('config', 'G-0YG6J7SYSV');
 
     let gaClientId = null, gaSessionId = null, gaSessionNumber = null;
+
     function initGAFields() {
-      if (!window.gtag) return;
-      try {
-        gtag('get', 'G-0YG6J7SYSV', 'client_id', function (cid) { gaClientId = cid; });
-        gtag('get', 'G-0YG6J7SYSV', 'session_id', function (sid) { gaSessionId = sid; });
-        gtag('get', 'G-0YG6J7SYSV', 'session_number', function (snum) { gaSessionNumber = snum; });
-      } catch (e) { console.warn('GA field error', e); }
+        if (!window.gtag) return;
+        try {
+        gtag('get', 'G-0YG6J7SYSV', 'client_id', function (cid) {
+            gaClientId = cid;
+        });
+        gtag('get', 'G-0YG6J7SYSV', 'session_id', function (sid) {
+            gaSessionId = sid;
+
+            // This triggers the custom event required to expose ga_session_id to GA4
+            gtag('event', 'session_id', {
+            ga_session_id: sid
+            });
+        });
+        gtag('get', 'G-0YG6J7SYSV', 'session_number', function (snum) {
+            gaSessionNumber = snum;
+        });
+        } catch (e) {
+        console.warn('GA field error', e);
+        }
     }
-  </script>
+    </script>
   <style>
     body { font-family: system-ui, sans-serif; background: #0f172a; color: #e5e7eb; min-height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center; }
     .card { background: #020617; border-radius: 16px; padding: 32px 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); max-width: 360px; width: 100%; text-align: center; }
