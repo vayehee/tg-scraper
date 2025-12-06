@@ -125,12 +125,14 @@
         <p id="subtitle">Paste your Telechan session key from the web app.</p>
 
         <div id="tg-login-container">
-            <p style="margin-bottom: 8px; font-size: 0.85rem; color: #9ca3af;">
-                Session key:
-            </p>
-            <textarea id="session-key-input"
-                      rows="3"
-                      placeholder="Paste session key here"></textarea>
+            <div id="session-key-wrapper">
+                <p style="margin-bottom: 8px; font-size: 0.85rem; color: #9ca3af;">
+                    Session key:
+                </p>
+                <textarea id="session-key-input"
+                          rows="3"
+                          placeholder="Paste session key here"></textarea>
+            </div>
 
             <div style="margin-top: 12px;">
                 <button id="ext-login-btn" class="tg-logout-btn">
@@ -143,6 +145,11 @@
     </div>
 
     <script type="text/javascript">
+        var isLoggedIn = false;
+        var currentSessionKey = null;
+        var currentExpiryIso = null;
+        var currentUsername = null;
+
         function setStatus(msg, isError) {
             var el = document.getElementById("status");
             el.textContent = msg || "";
@@ -153,8 +160,28 @@
             }
         }
 
+        function formatExpiry(isoString) {
+            if (!isoString) {
+                return "unknown time";
+            }
+            var d = new Date(isoString);
+            if (isNaN(d.getTime())) {
+                return "unknown time";
+            }
+            var weekdays = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+            var months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+            var dayName = weekdays[d.getDay()];
+            var day = d.getDate();
+            var monthName = months[d.getMonth()];
+            var hours = String(d.getHours()).padStart(2, "0");
+            var minutes = String(d.getMinutes()).padStart(2, "0");
+
+            return dayName + ", " + day + " " + monthName + " at " + hours + ":" + minutes;
+        }
+
         function buildGAContext() {
-            // Currently unused by /auth/ext/session, but ready if needed later.
+            // Ready if you want to send GA context with /auth/ext/session later
             return {
                 client_id: gaClientId || null,
                 session_id: gaSessionId || null,
@@ -167,6 +194,61 @@
                 language: navigator.language || null,
                 browser_language: navigator.language || null
             };
+        }
+
+        function updateUIToLoggedIn(username, expiresAtIso) {
+            isLoggedIn = true;
+            currentUsername = username;
+            currentExpiryIso = expiresAtIso;
+
+            var wrapper = document.getElementById("session-key-wrapper");
+            var button = document.getElementById("ext-login-btn");
+
+            if (wrapper) {
+                wrapper.style.display = "none";  // 1. hide input box
+            }
+            if (button) {
+                button.textContent = "Logout";   // 2. button text
+            }
+
+            var expiryText = formatExpiry(expiresAtIso);
+            setStatus(
+                "Logged in as " + username + ". Session to expire on " + expiryText + ".",
+                false
+            );
+
+            var subtitle = document.getElementById("subtitle");
+            if (subtitle) {
+                subtitle.textContent = "Extension connected. You may close this window.";
+            }
+        }
+
+        function updateUIToLoggedOut(message) {
+            isLoggedIn = false;
+            currentUsername = null;
+            currentExpiryIso = null;
+            currentSessionKey = null;
+
+            var wrapper = document.getElementById("session-key-wrapper");
+            var button = document.getElementById("ext-login-btn");
+            var input = document.getElementById("session-key-input");
+
+            if (wrapper) {
+                wrapper.style.display = "block";  // show input again
+            }
+            if (button) {
+                button.textContent = "Connect";
+            }
+            if (input) {
+                input.value = "";
+            }
+
+            setStatus(message || "Session ended. Paste a session key to connect.", false);
+
+            var subtitle = document.getElementById("subtitle");
+            if (subtitle) {
+                subtitle.textContent = "Paste your Telechan session key from the web app.";
+            }
         }
 
         function handleExtLogin() {
@@ -182,7 +264,7 @@
 
             var payload = {
                 session_key: key
-                // If you later want GA here:
+                // If you want GA here later:
                 // , ga: buildGAContext()
             };
 
@@ -212,13 +294,13 @@
                 }
 
                 var username = data.user.username || data.user.id;
-                setStatus("Logged in as @" + username);
 
-                // Optionally update UI to reflect success
-                var subtitle = document.getElementById("subtitle");
-                if (subtitle) {
-                    subtitle.textContent = "Extension connected as @" + username + ". You can close this window.";
-                }
+                // Session info from backend (recommended)
+                var sessionInfo = data.session || {};
+                currentSessionKey = sessionInfo.session_key || key;
+                var expiresAtIso = sessionInfo.expires_at || null;
+
+                updateUIToLoggedIn("@" + username, expiresAtIso);
 
                 try {
                     if (window.opener && !window.opener.closed) {
@@ -248,9 +330,50 @@
             });
         }
 
+        function handleLogout() {
+            if (!currentSessionKey) {
+                updateUIToLoggedOut("Session ended.");
+                return;
+            }
+
+            setStatus("Logging out...");
+
+            fetch("/auth/logout", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                credentials: "include",
+                body: JSON.stringify({
+                    session_key: currentSessionKey
+                })
+            })
+            .then(function () {
+                updateUIToLoggedOut("Logged out. Paste a new session key to connect.");
+
+                try {
+                    if (window.opener && !window.opener.closed) {
+                        window.opener.postMessage({
+                            type: "tg_ext_logout_success"
+                        }, "*");
+                    }
+                } catch (e) {
+                    console.warn("Could not postMessage logout to opener:", e);
+                }
+            })
+            .catch(function (err) {
+                console.error(err);
+                setStatus("Logout failed: " + err.message, true);
+            });
+        }
+
         document.getElementById("ext-login-btn").addEventListener("click", function (e) {
             e.preventDefault();
-            handleExtLogin();
+            if (isLoggedIn) {
+                handleLogout();
+            } else {
+                handleExtLogin();
+            }
         });
     </script>
 
