@@ -7,9 +7,9 @@ import hashlib
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any   # ✅ FIXED: Added Dict, Any
 
-from fastapi import FastAPI, Query, HTTPException, Request, Body
+from fastapi import FastAPI, Query, HTTPException, Request, Body, Response  # ✅ FIXED: Added Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import scrape
@@ -79,21 +79,24 @@ async def login_page() -> HTMLResponse:
     return HTMLResponse(content=html)
 
 
+# ============================================================
+# FIXED LOGIN HANDLER (with try/except preserved)
+# ============================================================
+
 @app.post("/auth/session/login")
-async def login(payload: Dict[str, Any], request: Request, response: Response):
+async def login(payload: Dict[str, Any], request: Request, response: Response):  # noqa
     try:
         if "user" not in payload:
             raise HTTPException(status_code=400, detail="Missing Telegram user payload")
 
-        user = userdb.create_or_update_user_from_telegram(
+        user = user_db.create_or_update_user_from_telegram(
             tg_payload=payload["user"],
             ga_ctx=payload.get("ga"),
             user_agent=request.headers.get("User-Agent"),
             source="telegram_widget",
         )
 
-        # 🔧 THIS LINE IS LIKELY CRASHING:
-        new_session = await session.create_session_for_user(
+        new_session = await session_db.create_session_for_user(
             telegram_id=user["telegram_id"],
             front_end="web_app",
             user_agent=request.headers.get("User-Agent"),
@@ -101,9 +104,8 @@ async def login(payload: Dict[str, Any], request: Request, response: Response):
             ip=request.client.host if request.client else None,
         )
 
-        # Set secure cookie
         response.set_cookie(
-            key="session_key",
+            key=WEB_SESSION_COOKIE,
             value=new_session["session_key"],
             max_age=7 * 24 * 3600,
             httponly=True,
@@ -121,7 +123,6 @@ async def login(payload: Dict[str, Any], request: Request, response: Response):
             status_code=500,
             content={"error": "Internal server error", "detail": str(e)},
         )
-
 
 
 @app.post("/auth/session/key")
