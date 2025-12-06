@@ -124,7 +124,7 @@ async def session_key(request: Request):
 
     new_session = session_db.create_session_for_user(
         telegram_id=session["telegram_id"],
-        source="none",
+        front_end=None,
         user_agent=request.headers.get("user-agent"),
         ga_ctx=None,
         ttl_hours=EXT_SESSION_TTL_HOURS,

@@ -87,7 +87,7 @@ def apply_session_schema(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def create_session_for_user(
     telegram_id: str,
-    source: Optional[str],
+    front_end: Optional[str],
     user_agent: Optional[str],
     ga_ctx: Optional[Dict[str, Any]] = None,
     ttl_hours: int = 24,
@@ -96,9 +96,9 @@ def create_session_for_user(
     """
     Create a new session:
 
-    - `source="web_app"` → normal web session
-    - `source="extension"` → direct extension session (if ever used)
-    - `source=None` → pairing session (key to be pasted into ext_login)
+    - `front_end="web_app"` → normal web session
+    - `front_end="extension"` → direct extension session (if ever used)
+    - `front_end=None` → pairing session (key to be pasted into ext_login)
 
     Document ID == session_key.
     """
@@ -116,7 +116,7 @@ def create_session_for_user(
         "expires_at": expires_at,
         "valid": True,
 
-        "front_end": source,  # None for pairing; "web_app" / "extension" otherwise
+        "front_end": front_end,  # None for pairing; "web_app" / "extension" otherwise
         "user_agent": user_agent,
 
         "ga_client_id": ga_ctx.get("client_id"),
@@ -138,7 +138,7 @@ def create_session_for_user(
     doc_ref.set(stored)
     logger.info(
         "Created session %s for telegram_id=%s (front_end=%s, ttl=%sh)",
-        session_key, telegram_id, source, ttl_hours
+        session_key, telegram_id, front_end, ttl_hours
     )
     return stored
 
