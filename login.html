@@ -83,7 +83,7 @@
   function applyLoggedInUI(username) {
     const subtitle = document.getElementById("subtitle");
     const container = document.getElementById("tg-login-container");
-    subtitle.textContent = "Logged in as @" + username;
+    // subtitle.textContent = "Logged in as @" + username;
     container.innerHTML =
       '<button id="logout-btn" class="tg-logout-btn" style="margin-right: 8px;">Log out</button>' +
       '<button id="get-session-btn" class="tg-logout-btn">Get Session Key</button>';
@@ -124,7 +124,7 @@
       .then(data => {
         webSessionKey = data.session_key;
         applyLoggedInUI(user.username || user.id);
-        setStatus("Logged in as " + user.username);
+        setStatus("You are now logged in as @" + user.username);
       })
       .catch(err => setStatus("Login failed: " + err.message, true));
   }
