@@ -17,22 +17,24 @@
     function initGAFields() {
         if (!window.gtag) return;
         try {
-        gtag('get', 'G-0YG6J7SYSV', 'client_id', function (cid) {
-            gaClientId = cid;
-        });
-        gtag('get', 'G-0YG6J7SYSV', 'session_id', function (sid) {
-            gaSessionId = sid;
-
-            // This triggers the custom event required to expose ga_session_id to GA4
-            gtag('event', 'session_id', {
-            ga_session_id: sid
+            gtag('get', 'G-0YG6J7SYSV', 'client_id', function (cid) {
+                gaClientId = cid;
             });
-        });
-        gtag('get', 'G-0YG6J7SYSV', 'session_number', function (snum) {
-            gaSessionNumber = snum;
-        });
+
+            gtag('get', 'G-0YG6J7SYSV', 'session_number', function (snum) {
+                gaSessionNumber = snum;
+            });
+
+            gtag('get', 'G-0YG6J7SYSV', 'session_id', function (sid) {
+                gaSessionId = sid;
+
+                // ✅ Fire event inside the callback where `sid` is defined
+                gtag('event', 'login_with_session', {
+                    ga_session_id: sid
+                });
+            });
         } catch (e) {
-        console.warn('GA field error', e);
+            console.warn('GA field error', e);
         }
     }
     </script>
