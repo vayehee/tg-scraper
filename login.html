@@ -52,8 +52,8 @@
 </head>
 <body>
 <div class="card">
-  <h1>Tchannelize Login</h1>
-  <p id="subtitle">Telegram Channels Analysis & Monetization App</p>
+  <h1>TChannelize Login</h1>
+  <p id="subtitle">Search, Analize & Monetise Telegram Channels</p>
   <div id="tg-login-container"></div>
   <div id="status" class="status"></div>
   <div id="session-key-wrapper" style="margin-top: 12px; display: none;">
@@ -124,7 +124,7 @@
       .then(data => {
         webSessionKey = data.session_key;
         applyLoggedInUI(user.username || user.id);
-        setStatus("Login successful.");
+        setStatus("Logged in as " + user.username);
       })
       .catch(err => setStatus("Login failed: " + err.message, true));
   }
