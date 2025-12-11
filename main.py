@@ -308,6 +308,22 @@ async def auth_ext_me(request: Request):
     })
 
 
+@app.get("/{filename}", response_class=HTMLResponse)
+async def serve_html_file(filename: str):
+    # Only allow simple names like "test.html", no subfolders
+    if not filename.endswith(".html"):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Prevent path traversal like "../../etc/passwd"
+    safe_name = os.path.basename(filename)
+    file_path = BASE_DIR / safe_name
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return HTMLResponse(content=file_path.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", "8080"))
